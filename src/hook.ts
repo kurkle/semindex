@@ -1,0 +1,46 @@
+import type { HookFinding } from './engine.js'
+
+/** The part of a Claude Code PostToolUse hook input that the check needs. */
+export interface HookInput {
+  hook_event_name?: string
+  tool_name?: string
+  tool_input?: { file_path?: string; path?: string }
+  cwd?: string
+}
+
+const TOOLS = new Set(['Edit', 'Write', 'MultiEdit'])
+
+/** The absolute path of the file an Edit, Write or MultiEdit call wrote, or null for anything else. */
+export function hookFilePath(input: HookInput): string | null {
+  if (input.hook_event_name && input.hook_event_name !== 'PostToolUse') return null
+  if (!input.tool_name || !TOOLS.has(input.tool_name)) return null
+  const p = input.tool_input?.file_path ?? input.tool_input?.path
+  return typeof p === 'string' && p ? p : null
+}
+
+/** Text of the message: one block per new function, its matches indented below it. */
+export function formatFindings(findings: HookFinding[]): string {
+  const lines = [
+    'semindex: functions just written resemble existing ones. A score is a lead, not a verdict: read the match before reusing it or writing a copy.',
+  ]
+  for (const f of findings) {
+    lines.push(`${f.name} (${f.path}:${f.line}) resembles:`)
+    for (const m of f.matches) {
+      const where = m.sameFolder ? 'same folder' : 'other folder'
+      const tag = m.exact ? 'exact copy' : m.score.toFixed(2)
+      lines.push(`  ${tag}  ${m.path}:${m.line}  ${m.name}  (${where})`)
+    }
+  }
+  return lines.join('\n')
+}
+
+/**
+ * The stdout of the hook: nothing when no function passes, otherwise the JSON shape Claude Code reads from a
+ * PostToolUse hook that exits 0, whose additionalContext is shown to the model next to the tool result.
+ */
+export function hookOutput(findings: HookFinding[]): string {
+  if (findings.length === 0) return ''
+  return JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: formatFindings(findings) },
+  })
+}

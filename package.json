@@ -1,0 +1,35 @@
+{
+  "name": "semindex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local semantic index of code and docs for your own repos",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "semindex": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skill"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "lint": "biome check . && tsc --noEmit",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@huggingface/tokenizers": "0.2.0",
+    "onnxruntime-node": "1.31.1",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "@types/node": "24.19.2",
+    "vitest": "5.1.0"
+  }
+}
