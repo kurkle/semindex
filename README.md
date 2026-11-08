@@ -19,16 +19,17 @@ queries run on the local machine.
 Node 24 or later.
 
 ```sh
-git clone git@github.com:kurkle/semindex.git
+git clone https://github.com/kurkle/semindex.git
 cd semindex
 npm ci            # also builds dist/
 npm link          # puts `semindex` on PATH
 ```
 
-The model (548 MB) downloads on first use from this repository's release
-`model-coderankembed-onnx-fp32-1` and is checked against pinned sha256 hashes. The repository is private, so the
-download needs a GitHub token: `GH_TOKEN`, `GITHUB_TOKEN` or a `gh auth login`. `SEMINDEX_MODEL_DIR` points at
-an already downloaded copy instead.
+The model (548 MB) downloads on first use from this repository's release `model-coderankembed-onnx-fp32-1` and
+is checked against pinned sha256 hashes. `SEMINDEX_MODEL_DIR` points at an already downloaded copy instead.
+
+The model is [nomic-ai/CodeRankEmbed](https://huggingface.co/nomic-ai/CodeRankEmbed) (MIT) exported to ONNX;
+the release notes say how.
 
 ## Use
 
