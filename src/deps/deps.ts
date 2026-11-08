@@ -33,6 +33,8 @@ export interface DepsStats {
   reusedVectors: number
   /** Namespaces without vectors after this run. */
   missingVectors: number
+  /** Namespaces a search left to the background embedding; their hits come from BM25 alone until it ends. */
+  embeddingInBackground?: number
   noTypes: { name: string; version: string; typesFrom: string | null }[]
   skipped: { name: string; version: string; reason: string }[]
   seconds: number
@@ -45,7 +47,8 @@ export interface DepHit {
   line: number
   name: string
   kind: string
-  cosine: number
+  /** Null while the package is still being embedded: the hit came from BM25 alone. */
+  cosine: number | null
   text: string
 }
 
@@ -101,6 +104,7 @@ export class Deps {
   private readonly vectors = new Map<string, Float32Array>()
   private readonly inflight = new Map<string, Promise<{ index: PackageIndex; parsed: boolean }>>()
   private bm25: { signature: string; bm25: Bm25 } | null = null
+  private embedding: Promise<void> | null = null
 
   constructor(
     readonly store: DepStore,
@@ -281,19 +285,48 @@ export class Deps {
   }
 
   /**
+   * Starts embedding the packages that have no vectors yet, unless an embedding run is already going; returns
+   * how many lack vectors. One run at a time, so packages left out wait for the next search.
+   */
+  private embedInBackground(loaded: Loaded[]): number {
+    const todo = loaded.filter((l) => l.index.chunks.length > 0 && !this.vectorsOf(l.key))
+    if (todo.length > 0 && !this.embedding) {
+      const stats = { embedded: 0, reusedVectors: 0 } as DepsStats
+      this.embedding = this.embed(todo, stats)
+        .then(() => this.log(`semindex: embedded ${stats.embedded} dependency chunks in the background`))
+        .catch((e: unknown) => this.log(`semindex: background dependency embedding failed: ${String(e)}`))
+        .finally(() => {
+          this.embedding = null
+        })
+    }
+    return todo.length
+  }
+
+  embeddingRunning(): boolean {
+    return this.embedding !== null
+  }
+
+  /** Resolves when the background embedding (if any) has ended. */
+  async embedded(): Promise<void> {
+    await this.embedding
+  }
+
+  /**
    * Hybrid search over the chunks of the repository's locked dependency versions: BM25 and embedding cosine
-   * fused by reciprocal rank. Packages without vectors are embedded first.
+   * fused by reciprocal rank. It never waits for embedding: packages without vectors are embedded in the
+   * background and meanwhile take part through BM25 alone.
    */
   async search(
     repo: RepoInfo,
     text: string,
     opts: { k?: number; packages?: string[] } = {}
   ): Promise<{ hits: DepHit[]; stats: DepsStats }> {
-    const { stats, loaded } = await this.prepare(repo, { embed: true, packages: opts.packages })
-    const rows: { l: Loaded; i: number; vec: Float32Array }[] = []
+    const { stats, loaded } = await this.prepare(repo, { packages: opts.packages })
+    stats.embeddingInBackground = this.embedInBackground(loaded)
+    const rows: { l: Loaded; i: number; vec: Float32Array | null }[] = []
     for (const l of loaded) {
       const vec = this.vectorsOf(l.key)
-      if (vec) l.index.chunks.forEach((_, i) => rows.push({ l, i, vec }))
+      l.index.chunks.forEach((_, i) => rows.push({ l, i, vec }))
     }
     const signature = loaded.map((l) => l.key).join('\n')
     if (this.bm25?.signature !== signature) {
@@ -303,17 +336,21 @@ export class Deps {
       })
       this.bm25 = { signature, bm25: new Bm25(docs) }
     }
-    const [qv] = (await (await this.embedder()).embed([text], { query: true }))[0] ?? []
-    if (!qv) return { hits: [], stats }
+    // Rows without vectors score 0 here, which reciprocalRankFusion leaves out of the embedding ranking.
     const cos = new Float64Array(rows.length)
-    rows.forEach((r, j) => {
-      cos[j] = dot(r.vec, qv, r.i * DIMS)
-    })
+    if (rows.some((r) => r.vec)) {
+      const [qv] = (await (await this.embedder()).embed([text], { query: true }))[0] ?? []
+      if (qv) {
+        rows.forEach((r, j) => {
+          if (r.vec) cos[j] = dot(r.vec, qv, r.i * DIMS)
+        })
+      }
+    }
     const kw = this.bm25.bm25.score(tokenize(text))
     const fused = reciprocalRankFusion([cos, kw], RRF_K)
     const order = rows.map((_, j) => j).sort((a, b) => (fused[b] ?? 0) - (fused[a] ?? 0))
     const hits = order.slice(0, opts.k ?? 10).map((j) => {
-      const { l, i } = rows[j] as (typeof rows)[number]
+      const { l, i, vec } = rows[j] as (typeof rows)[number]
       const c = l.index.chunks[i]
       return {
         package: l.index.name,
@@ -322,7 +359,7 @@ export class Deps {
         line: c?.line ?? 0,
         name: c?.name ?? '',
         kind: c?.declKind ?? '',
-        cosine: cos[j] ?? 0,
+        cosine: vec ? (cos[j] ?? 0) : null,
         text: (c?.text ?? '').slice(0, 2000),
       }
     })
