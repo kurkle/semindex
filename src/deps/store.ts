@@ -27,17 +27,11 @@ export function namespaceKey(dep: Pick<LockedDep, 'name' | 'version' | 'resolved
 
 const nameOfKey = (key: string): string => key.slice(0, key.lastIndexOf('@', key.lastIndexOf('-'))).replace('+', '/')
 
-interface RepoRegistry {
-  /** Git common dir -> working tree roots seen for it. */
-  repos: Record<string, string[]>
-}
-
 /**
  * The dependency cache, shared by every repository and worktree on the machine:
  *
  *   <cache>/v<format>/deps/d<extractor>/<name>@<version>-<hash>.json     declarations, docs, API hashes
  *   <cache>/v<format>/deps/vectors/<model>/d<extractor>/<key>.vec       one vector per chunk, float16
- *   <cache>/v<format>/deps/repos.json                                    repositories whose lockfiles count for gc
  */
 export class DepStore {
   readonly root: string
@@ -105,31 +99,6 @@ export class DepStore {
       }
     }
     return found
-  }
-
-  private registryPath(): string {
-    return join(this.root, 'repos.json')
-  }
-
-  readRegistry(): RepoRegistry {
-    try {
-      return JSON.parse(readFileSync(this.registryPath(), 'utf8')) as RepoRegistry
-    } catch {
-      return { repos: {} }
-    }
-  }
-
-  /** Remembers a working tree whose lockfile references packages here, so gc keeps them. */
-  register(commonDir: string, root: string): void {
-    const reg = this.readRegistry()
-    const roots = reg.repos[commonDir] ?? []
-    if (roots.includes(root)) return
-    reg.repos[commonDir] = [...roots, root].sort()
-    writeAtomic(this.registryPath(), JSON.stringify(reg, null, 1))
-  }
-
-  writeRegistry(reg: RepoRegistry): void {
-    writeAtomic(this.registryPath(), JSON.stringify(reg, null, 1))
   }
 
   /** Every namespace key in the cache, any extractor version, with the files that hold it. */

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 
 export interface RepoInfo {
@@ -151,4 +151,21 @@ export function worktreeRoots(commonDir: string): string[] {
     .split('\n')
     .filter((l) => l.startsWith('worktree '))
     .map((l) => l.slice('worktree '.length))
+}
+
+/**
+ * The main working tree of a repository, given its common dir: the first one `git worktree list` names.
+ * Null for a bare repository or one that no longer exists.
+ */
+export function mainWorktree(commonDir: string): string | null {
+  let out: string
+  try {
+    out = git(commonDir, ['worktree', 'list', '--porcelain'])
+  } catch {
+    return null
+  }
+  const first = out.split('\n\n')[0]?.split('\n') ?? []
+  const root = first.find((l) => l.startsWith('worktree '))?.slice('worktree '.length)
+  if (!root || first.includes('bare') || !existsSync(root)) return null
+  return realpathSync(root)
 }

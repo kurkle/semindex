@@ -3,16 +3,22 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { absoluteDirs, parseFileSpec } from './args.js'
 import { call } from './client.js'
+import { defaultConfigPath } from './config.js'
 import type { DepHit, DepsStats, UpgradeReport } from './deps/deps.js'
 import type { HookFinding, IndexStats, Match } from './engine.js'
-import { findingLines, type HookInput } from './hook.js'
+import { findingLines, type HookInput, matchPlace } from './hook.js'
+import { forget, groupAdd, groupList, groupRemove, type Member } from './repos.js'
 import { type Request, serve } from './server.js'
-import { type PairRow, type SearchHit, Service } from './service.js'
+import { hookApplies, type PairRow, type SearchHit, Service } from './service.js'
 import { defaultCacheDir } from './store.js'
 
 const HELP = `semindex: local semantic index of code and docs
 
-  semindex index [dir...]            index working trees (default: the current one)
+  semindex index [dir...]            index working trees (default: the current one); the hook acts only in these
+  semindex forget [dir]              the hook stops acting in this repository (cached data stays until gc)
+  semindex group add <name> <dir...> search these repositories together in the hook, diff and similar
+  semindex group remove <name> [dir...]  remove repositories from a group, or the whole group
+  semindex group list                groups and their members
   semindex query <text> [-k N]       hybrid search (BM25 + embeddings) for a description
   semindex similar <file>[:line]     functions nearest to the function at that line
   semindex pairs [dir...]            likely copies across one or more repos, cross-folder first
@@ -27,7 +33,8 @@ const HELP = `semindex: local semantic index of code and docs
   semindex status                    cache location and size
 
 Options: --package NAME limits --deps to one dependency (repeatable); --json prints JSON.
---local runs in this process instead of the server; --cache DIR (or SEMINDEX_CACHE) sets the cache.`
+--local runs in this process instead of the server; --cache DIR (or SEMINDEX_CACHE) sets the cache.
+Groups are kept in $XDG_CONFIG_HOME/semindex/config.json (default ~/.config/semindex/config.json).`
 
 const NOT_PROOF = 'No match is not proof that no duplicate exists: the index finds leads, it does not rule copies out.'
 
@@ -37,17 +44,22 @@ async function handle(service: Service, req: Request): Promise<unknown> {
     case 'ping':
       return 'pong'
     case 'index':
-      return Promise.all((p.dirs as string[]).map((d) => service.index(d)))
+      return Promise.all(
+        (p.dirs as string[]).map((d) => {
+          service.register(d)
+          return service.index(d)
+        })
+      )
     case 'query':
       return service.query(p.dir as string, p.text as string, p.k as number, p.tests as boolean)
     case 'similar':
-      return service.similar(p.file as string, p.line as number | undefined, p.k as number)
+      return service.similar(p.file as string, p.line as number | undefined, p.k as number, p.config as string)
     case 'diff':
-      return service.diff(p.dir as string, p.base as string)
+      return service.diff(p.dir as string, p.base as string, p.config as string)
     case 'pairs':
       return service.pairs(p.dirs as string[], p.threshold as number | undefined)
     case 'hook':
-      return service.hook(p.input as HookInput)
+      return service.hook(p.input as HookInput, p.config as string)
     case 'index-deps':
       return Promise.all(
         (p.dirs as string[]).map((d) =>
@@ -178,21 +190,42 @@ function printUpgrade(r: UpgradeReport, base: string, limit: number): void {
   )
 }
 
-function printSimilar(r: { target: { path: string; line: number; name: string }; matches: Match[] }): void {
+function printPending(pending: string[]): void {
+  if (pending.length === 0) return
+  console.log(
+    `still being embedded in the background: ${pending.join(', ')}; their functions without vectors are not ` +
+      'compared yet (semindex index <dir> embeds them up front)'
+  )
+}
+
+function printSimilar(r: {
+  target: { path: string; line: number; name: string }
+  matches: Match[]
+  pending: string[]
+}): void {
   console.log(`nearest to ${r.target.name} (${r.target.path}:${r.target.line}):`)
-  for (const m of r.matches) {
-    const tag = m.exact ? 'copy' : m.score.toFixed(2)
-    console.log(`${tag}  ${m.path}:${m.line}  ${m.name}  (${m.sameFolder ? 'same folder' : 'other folder'})`)
-  }
+  for (const m of r.matches) console.log(`${m.exact ? 'copy' : m.score.toFixed(2)}  ${matchPlace(m)}`)
+  printPending(r.pending)
   console.log(NOT_PROOF)
 }
 
-function printDiff(r: { base: string; checked: number; findings: HookFinding[] }, base: string): void {
+function printDiff(
+  r: { base: string; checked: number; findings: HookFinding[]; pending: string[] },
+  base: string
+): void {
   console.log(
     `${r.checked} functions added or changed since ${base} (${r.base.slice(0, 9)}); ${r.findings.length} resemble existing ones`
   )
   for (const line of findingLines(r.findings)) console.log(line)
+  printPending(r.pending)
   console.log(`A score is a lead, not a verdict. ${NOT_PROOF}`)
+}
+
+function printMembers(members: Member[]): void {
+  for (const m of members) {
+    const where = m.root ?? `${m.commonDir} (no working tree found)`
+    console.log(`  ${m.name}  ${where}${m.indexed ? '' : '  (not indexed: the hook does not act in it)'}`)
+  }
 }
 
 function side(s: PairRow['a'], multi: boolean): string {
@@ -233,6 +266,7 @@ async function main(): Promise<void> {
   })
   const [cmd, ...args] = positionals
   const cacheDir = values.cache ?? defaultCacheDir()
+  const config = defaultConfigPath()
   if (!cmd || values.help) {
     console.log(HELP)
     return
@@ -258,7 +292,9 @@ async function main(): Promise<void> {
       // A hook must never get in the way: any failure ends silently with exit 0.
       try {
         const input = JSON.parse(readFileSync(0, 'utf8')) as HookInput
-        const text = (await run('hook', { input })) as string
+        // Outside an indexed repository the hook does nothing, and starts no server.
+        if (!hookApplies(input, cacheDir)) return
+        const text = (await run('hook', { input, config })) as string
         if (text) process.stdout.write(`${text}\n`)
       } catch (e) {
         console.error(`semindex hook: ${e instanceof Error ? e.message : String(e)}`)
@@ -303,13 +339,13 @@ async function main(): Promise<void> {
     case 'similar': {
       const spec = args[0]
       if (!spec) throw new Error('usage: semindex similar <file>[:line]')
-      const r = (await run('similar', { ...parseFileSpec(spec), k })) as Parameters<typeof printSimilar>[0]
+      const r = (await run('similar', { ...parseFileSpec(spec), k, config })) as Parameters<typeof printSimilar>[0]
       out(r, () => printSimilar(r))
       return
     }
     case 'diff': {
       const base = args[0] ?? 'origin/HEAD'
-      const r = (await run('diff', { dir: process.cwd(), base })) as Parameters<typeof printDiff>[0]
+      const r = (await run('diff', { dir: process.cwd(), base, config })) as Parameters<typeof printDiff>[0]
       out(r, () => printDiff(r, base))
       return
     }
@@ -335,6 +371,46 @@ async function main(): Promise<void> {
       const threshold = values.threshold ? Number(values.threshold) : undefined
       const r = (await run('pairs', { dirs, threshold })) as Parameters<typeof printPairs>[0]
       out(r, () => printPairs(r, values.limit ? Number(values.limit) : 40))
+      return
+    }
+    case 'forget': {
+      const [dir] = absoluteDirs(args.slice(0, 1))
+      const r = forget(cacheDir, config, dir as string)
+      out(r, () => {
+        console.log(
+          r.wasIndexed
+            ? `${r.root}: the hook no longer acts in this repository; its cached data stays until gc`
+            : `${r.root}: was not indexed`
+        )
+        if (r.groups.length) console.log(`removed from groups: ${r.groups.join(', ')}`)
+      })
+      return
+    }
+    case 'group': {
+      const [sub, name = '', ...dirs] = args
+      if (sub === 'add') {
+        const r = groupAdd(cacheDir, config, name, absoluteDirs(dirs))
+        out(r, () => {
+          console.log(`group ${name}:`)
+          printMembers(r)
+        })
+      } else if (sub === 'remove') {
+        const r = groupRemove(config, name, dirs.length ? absoluteDirs(dirs) : [])
+        out(r, () =>
+          console.log(r.left ? `group ${name}: ${r.removed.length} removed, ${r.left} left` : `group ${name} removed`)
+        )
+      } else if (sub === 'list') {
+        const r = groupList(cacheDir, config)
+        out(r, () => {
+          for (const g of r) {
+            console.log(`${g.name}:`)
+            printMembers(g.members)
+          }
+          if (r.length === 0) console.log(`no groups in ${config}`)
+        })
+      } else {
+        throw new Error('usage: semindex group add <name> <dir...> | group remove <name> [dir...] | group list')
+      }
       return
     }
     case 'status': {

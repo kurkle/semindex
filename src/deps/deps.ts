@@ -12,6 +12,7 @@ import {
 } from '../constants.js'
 import type { Embedder } from '../embed.js'
 import { type RepoInfo, showFile, worktreeRoots } from '../git.js'
+import type { Registry, Repos } from '../registry.js'
 import { type Fetcher, fetchTarball } from './fetch.js'
 import { type LockedDep, lockedDeps, typedModules } from './lockfile.js'
 import { indexPackage, keepFile, type PackageIndex } from './package.js'
@@ -108,6 +109,7 @@ export class Deps {
 
   constructor(
     readonly store: DepStore,
+    private readonly registry: Registry,
     private readonly embedder: () => Promise<Embedder>,
     private readonly log: (msg: string) => void = () => {},
     private readonly fetcher: Fetcher = fetch
@@ -254,7 +256,7 @@ export class Deps {
   ): Promise<{ stats: DepsStats; loaded: Loaded[] }> {
     const t0 = performance.now()
     const deps = this.select(repo.root, opts.packages)
-    this.store.register(repo.commonDir, repo.root)
+    this.registry.add(repo.commonDir, repo.root)
     const stats: DepsStats = {
       root: repo.root,
       packages: deps.length,
@@ -412,23 +414,23 @@ export class Deps {
    * registered repository or worktree that no longer exists drops out of the registry.
    */
   gc(): { removed: string[]; kept: number; bytes: number; repos: number } {
-    const reg = this.store.readRegistry()
+    const repos = this.registry.read()
     const keep = new Set<string>()
-    const live: Record<string, string[]> = {}
-    for (const commonDir of Object.keys(reg.repos)) {
+    const live: Repos = {}
+    for (const [commonDir, entry] of Object.entries(repos)) {
       if (!existsSync(commonDir)) continue
-      const roots = [...new Set([...worktreeRoots(commonDir), ...(reg.repos[commonDir] ?? [])])].filter((r) =>
-        existsSync(join(r, 'package-lock.json'))
-      )
-      if (roots.length === 0) continue
-      live[commonDir] = roots.sort()
-      for (const root of roots) {
+      const roots = [...new Set([...worktreeRoots(commonDir), ...entry.roots])].filter((r) => existsSync(r)).sort()
+      const locked = roots.filter((r) => existsSync(join(r, 'package-lock.json')))
+      // A repository opted in to the hook stays registered even without a lockfile.
+      if (locked.length === 0 && !entry.indexed) continue
+      live[commonDir] = entry.indexed ? { roots, indexed: true } : { roots: locked }
+      for (const root of locked) {
         try {
           for (const d of this.locked(root)) keep.add(namespaceKey(d))
         } catch {}
       }
     }
-    this.store.writeRegistry({ repos: live })
+    this.registry.write(live)
     const r = this.store.removeExcept(keep)
     for (const key of r.removed) {
       this.indexes.delete(key)
