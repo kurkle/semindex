@@ -129,3 +129,26 @@ export function readBlobs(root: string, ids: string[]): Map<string, Buffer> {
   }
   return result
 }
+
+/** A file's content at a commit, or null when the commit lacks it. */
+export function showFile(root: string, rev: string, path: string): string | null {
+  try {
+    return git(root, ['show', `${rev}:${path}`])
+  } catch {
+    return null
+  }
+}
+
+/** The working tree roots of a repository, given its common dir; empty when it no longer exists. */
+export function worktreeRoots(commonDir: string): string[] {
+  let out: string
+  try {
+    out = git(commonDir, ['worktree', 'list', '--porcelain'])
+  } catch {
+    return []
+  }
+  return out
+    .split('\n')
+    .filter((l) => l.startsWith('worktree '))
+    .map((l) => l.slice('worktree '.length))
+}

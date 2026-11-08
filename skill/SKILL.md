@@ -45,3 +45,10 @@ still look for one where it would naturally live (the shared library folders) be
   weakly than code matches code, so try `similar` on the code you wrote as well.
 - `semindex similar path/to/file.ts:42`: nearest functions to the function at that line, with scores.
 - `semindex pairs`: likely copies over the whole repository, cross-folder first.
+- `semindex query --deps "what the dependency function does"`: the same search over the dependency versions
+  the lockfile pins, each hit labelled `package@version` with its declaration. Use it before calling a
+  dependency's API you are not sure of: it answers for the installed version, not the latest docs.
+  `--package NAME` limits it to one dependency.
+- `semindex upgrade origin/main`: after a dependency bump, the bumped packages' API diffs and the functions
+  that use them in three tiers (named in the changelog, uses a changed or removed declaration, uses the
+  package). It is a review order, not a list of breaks; run `tsc` for those.

@@ -1,8 +1,9 @@
 # semindex
 
 Local semantic index of code and docs in git repositories. It finds functions that do the same job as the one
-you just wrote, likely copies across folders and repos, and code or docs matching a description. Indexing and
-queries run on the local machine.
+you just wrote, likely copies across folders and repos, and code or docs matching a description. It also indexes
+the npm dependencies a repo's lockfile pins, to look up a dependency's API at the exact locked version and to
+rank the functions a dependency upgrade may touch. Indexing and queries run on the local machine.
 
 - **Code**: functions, methods and arrow functions bound to a name, from `.ts`, `.tsx`, `.js`, `.jsx` (TypeScript
   compiler API), each with an AST hash that ignores names, literals, types and JSDoc. Tests and mocks are indexed
@@ -13,6 +14,14 @@ queries run on the local machine.
 - **Cache**: outside the working copy, in `~/.cache/semindex` (or `$SEMINDEX_CACHE`), keyed by git blob id. A
   commit's view is `git ls-tree` plus the dirty files, so another branch or another worktree of the same repo
   reuses everything already embedded, and an edit re-embeds only the functions whose text changed.
+- **Dependencies**: the direct dependencies, dev dependencies and peer dependencies in `package.json`, at the
+  versions `package-lock.json` pins. Each package version is read from its registry tarball (never from
+  `node_modules`), after checking the tarball against the lockfile's sha512 integrity; the package's code is
+  parsed, never run. Its declaration files (`.d.ts`, `.d.mts`, `.d.cts`) become one chunk per declaration with
+  its JSDoc, and its Markdown (README, CHANGELOG, docs) one chunk per heading section. A package that ships no
+  declaration files is marked as having no types of its own; its `@types` package is indexed only when the repo
+  depends on it directly. Each version is one namespace in the cache, keyed by registry, name, version,
+  integrity, extractor version and model, so every repo and worktree that locks the same version shares it.
 
 ## Install
 
@@ -41,6 +50,13 @@ semindex pairs                         # likely copies in the current repo, cros
 semindex pairs ../repo-a ../repo-b     # across repos, cross-repo first
 semindex diff origin/main              # functions the branch added or changed, with existing ones they resemble
 semindex status                        # cache location and size
+
+semindex index --deps --parse-only     # read the locked dependencies' declarations and docs (seconds)
+semindex index --deps                  # ...and embed them, for query --deps
+semindex query --deps "format a date as a relative time"   # search the locked dependency versions
+semindex query --deps --package date-fns "add business days" # one dependency only (embeds just that one)
+semindex upgrade origin/main           # dependencies bumped since the branch left base, functions to review first
+semindex gc                            # drop dependency versions that no indexed repo's lockfile references
 ```
 
 The commands talk to a resident server (`semindex serve`) that keeps the model and indexes in memory behind a
@@ -49,6 +65,36 @@ it; `--local` runs a command in-process instead.
 
 `diff` compares every function added or changed since the branch left the base (dirty files included) with
 the rest of the repo, with the hook's thresholds; it suits a review of a whole branch.
+
+`query --deps` searches only the dependency versions the working tree's lockfile pins, BM25 and embeddings
+fused as for code; each hit names `package@version`, the file inside the package and the declaration. Parsing
+happens on first need. Embedding is separate: `index --deps` or the first `query --deps` embeds what is
+missing. That takes a while once: about 16 chunks a second on an M1 Pro, so the ten largest dependencies of a
+repo with 119 of them (61,000 chunks) took an hour; `--package` limits it to the packages you name. Vectors are reused by chunk text across versions, so an upgrade re-embeds only the declarations
+and doc sections that changed.
+
+`upgrade [base]` (default `origin/HEAD`, merge base as for `diff`) compares the lockfile at the merge base with
+the working tree's. For each direct dependency whose version changed it diffs the two versions' declarations
+(added, removed, changed by declaration hash) and lists the repo's production functions that import the
+package, in three tiers:
+
+1. uses a changed or removed declaration that the Markdown lines new in the later version (changelog, docs)
+   name;
+2. uses a changed or removed declaration (a default or namespace import used as a whole counts when anything
+   changed);
+3. uses the package at all.
+
+Functions using a removed declaration come first within their tier. Imports from `foo` count for `@types/foo`,
+and imports of Node builtins for `@types/node`. On replayed upgrades the tiers caught 49 %, 88 % and 93 % of
+the functions that had to change, while 37 %, 17 % and 12 % of the functions they listed changed
+(`docs/dependencies.md`). It is a ranking of what to review, not a list of what breaks: type-level breaks are
+the compiler's job, so run `tsc` against the new types. `upgrade` needs only the parsed declarations and the
+repo's parsed code, never embeddings. Tarballs come from the `resolved` URL without credentials, so a
+dependency on a registry that needs a login is reported as skipped.
+
+`gc` keeps every package version that a lockfile of a registered repo still pins (any of its worktrees) and
+removes the rest; `index --deps` and `query --deps` register a repo, and a repo or worktree that no longer
+exists drops out.
 
 A score is a lead, not a verdict, and no match is not proof that no duplicate exists. `skill/SKILL.md` explains
 how to read the scores; the thresholds and the measurements behind them are in `docs/thresholds.md`.

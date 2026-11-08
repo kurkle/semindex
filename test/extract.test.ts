@@ -97,6 +97,36 @@ describe('extractCode', () => {
   })
 })
 
+describe('package uses', () => {
+  it('records the package bindings each function refers to, namespace members resolved', () => {
+    const src = `import { format as fmt, type Locale } from 'date-fns'
+import * as fns from 'date-fns/locale'
+import Box from '@mui/material/Box'
+import { helper } from './helper'
+import type ts = require('typescript')
+
+export function label(d: Date, l: Locale): string {
+  const o = { fmt: 1 }
+  return fmt(d, 'P') + fns.fi.code + helper() + o.fmt
+}
+export const View = () => <Box sx={{ p: 1 }} />
+export function kind(k: ts.SyntaxKind) {
+  return k
+}
+function plain(n: number) {
+  return n
+}
+`
+    const chunks = extractCode('a.tsx', src, 'tsx')
+    expect(Object.fromEntries(chunks.map((c) => [c.name, c.uses]))).toEqual({
+      label: ['date-fns/locale:fi', 'date-fns:Locale', 'date-fns:format'],
+      View: ['@mui/material/Box:*'],
+      kind: ['typescript:SyntaxKind'],
+      plain: undefined,
+    })
+  })
+})
+
 describe('classifyPath', () => {
   it('tells tests, production, docs and skipped files apart', () => {
     expect(classifyPath('src/lib/a.ts')).toEqual({ lang: 'ts', test: false })

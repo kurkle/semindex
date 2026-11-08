@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { gzipSync } from 'node:zlib'
 import { tokenize } from '../src/bm25.js'
 import type { Embedder } from '../src/embed.js'
 import { normalize } from '../src/embed.js'
@@ -52,4 +54,45 @@ export function writeFiles(dir: string, files: Record<string, string>): void {
     mkdirSync(dirname(join(dir, p)), { recursive: true })
     writeFileSync(join(dir, p), c)
   }
+}
+
+/** A gzipped npm-style tarball (files under package/), built in memory for tests. */
+export function makeTarball(files: Record<string, string>, opts: { top?: string } = {}): Buffer {
+  const blocks: Buffer[] = []
+  const header = (name: string, size: number, type: string) => {
+    const h = Buffer.alloc(512)
+    h.write(name.slice(0, 100), 0)
+    h.write('0000644\0', 100)
+    h.write('0000000\0', 108)
+    h.write('0000000\0', 116)
+    h.write(`${size.toString(8).padStart(11, '0')}\0`, 124)
+    h.write('00000000000\0', 136)
+    h.write('        ', 148)
+    h.write(type, 156)
+    h.write('ustar\0', 257)
+    h.write('00', 263)
+    let sum = 0
+    for (const b of h) sum += b
+    h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148)
+    return h
+  }
+  const pad = (b: Buffer) => Buffer.concat([b, Buffer.alloc((512 - (b.length % 512)) % 512)])
+  for (const [path, content] of Object.entries(files)) {
+    const name = `${opts.top ?? 'package'}/${path}`
+    const body = Buffer.from(content, 'utf8')
+    if (name.length > 100) {
+      const rec = ` path=${name}\n`
+      let len = rec.length + 2
+      while (`${len}${rec}`.length !== len) len++
+      const pax = Buffer.from(`${len}${rec}`, 'utf8')
+      blocks.push(header('PaxHeader', pax.length, 'x'), pad(pax))
+    }
+    blocks.push(header(name, body.length, '0'), pad(body))
+  }
+  blocks.push(Buffer.alloc(1024))
+  return gzipSync(Buffer.concat(blocks))
+}
+
+export function integrityOf(bytes: Uint8Array): string {
+  return `sha512-${createHash('sha512').update(bytes).digest('base64')}`
 }

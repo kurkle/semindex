@@ -13,6 +13,11 @@ export interface Chunk {
   textHash: string
   /** Names this function calls or renders (JSX), for the caller/callee filter. */
   calls: string[]
+  /**
+   * Bindings imported from packages that a function refers to, as `<module specifier>:<imported name>`; the
+   * name is `*` for a default or namespace import used as a whole. Relative imports are left out.
+   */
+  uses?: string[]
   exported: boolean
   text: string
 }

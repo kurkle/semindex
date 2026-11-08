@@ -10,7 +10,7 @@ export function defaultCacheDir(): string {
   return join(xdg || join(homedir(), '.cache'), 'semindex')
 }
 
-function writeAtomic(path: string, data: string | Uint8Array): void {
+export function writeAtomic(path: string, data: string | Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true })
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
   writeFileSync(tmp, data)

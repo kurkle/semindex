@@ -10,7 +10,7 @@ export type { Chunk } from './types.js'
  * Bump when extraction output changes for the same input. Chunks and vectors are stored under this version,
  * so a bump re-extracts and re-embeds everything, while a model change alone keeps the chunks.
  */
-export const EXTRACTOR_VERSION = 2
+export const EXTRACTOR_VERSION = 3
 
 export interface Extracted {
   /** Set when the content looks generated or minified; such a file has no chunks. */
