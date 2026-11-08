@@ -1,4 +1,4 @@
-import type { HookFinding } from './engine.js'
+import type { HookFinding, Match } from './engine.js'
 
 /** The part of a Claude Code PostToolUse hook input that the check needs. */
 export interface HookInput {
@@ -26,15 +26,20 @@ export function formatFindings(findings: HookFinding[]): string {
   return [...lines, ...findingLines(findings)].join('\n')
 }
 
+/** Where a match is: `path:line  name  (same folder)`, or with the repository named when it is another one. */
+export function matchPlace(m: Match): string {
+  if (m.repo) return `${m.repo}/${m.path}:${m.line}  ${m.name}  (other repo)`
+  return `${m.path}:${m.line}  ${m.name}  (${m.sameFolder ? 'same folder' : 'other folder'})`
+}
+
 /** One block per function, its matches indented below it; shared by the hook and `semindex diff`. */
 export function findingLines(findings: HookFinding[]): string[] {
   const lines: string[] = []
   for (const f of findings) {
     lines.push(`${f.name} (${f.path}:${f.line}) resembles:`)
     for (const m of f.matches) {
-      const where = m.sameFolder ? 'same folder' : 'other folder'
       const tag = m.exact ? 'exact copy' : m.score.toFixed(2)
-      lines.push(`  ${tag}  ${m.path}:${m.line}  ${m.name}  (${where})`)
+      lines.push(`  ${tag}  ${matchPlace(m)}`)
     }
   }
   return lines

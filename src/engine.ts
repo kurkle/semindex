@@ -54,12 +54,20 @@ export interface IndexStats {
 }
 
 export interface Match {
+  /** The group member the match is in (basename of its main working tree); absent for the repository itself. */
+  repo?: string
   path: string
   line: number
   name: string
   score: number
   sameFolder: boolean
   exact: boolean
+}
+
+/** Another member of a group: the root of its loaded view and the name its matches are reported under. */
+export interface Peer {
+  root: string
+  label: string
 }
 
 export interface HookFinding {
@@ -361,46 +369,53 @@ export class Engine {
   }
 
   /**
-   * Nearest production functions to one function, by cosine of the first parts. Excludes the function itself
-   * (same path and name) and functions it calls or that call it.
+   * Nearest production functions to one function, by cosine of the first parts, in its own view and in the
+   * views of `peers`. Excludes the function itself (same path and name in its own view) and functions it calls
+   * or that call it. A peer's function is never in the same folder.
    */
-  nearest(root: string, target: Entry, k: number): Match[] {
+  nearest(root: string, target: Entry, k: number, peers: Peer[] = []): Match[] {
     const qv = target.vectors[0]
     if (!qv) return []
     const self: PairItem = this.pairItem('', target)
     const folder = dirname(target.file.path)
     const out: Match[] = []
-    for (const e of this.entries(root)) {
-      if (e.chunk.kind !== 'function' || e.file.test || e.chunk.n < HOOK_MIN_TOKENS) continue
-      if (e.file.path === target.file.path && e.chunk.name === target.chunk.name) continue
-      if (callsEither(self, this.pairItem('', e))) continue
-      const v = e.vectors[0]
-      if (!v) continue
-      out.push({
-        path: e.file.path,
-        line: e.chunk.line,
-        name: e.chunk.name,
-        score: dot(v, qv),
-        sameFolder: dirname(e.file.path) === folder,
-        exact: e.chunk.astHash === target.chunk.astHash,
-      })
+    for (const view of [{ root, label: '' }, ...peers]) {
+      if (view.root !== root && !this.views.has(view.root)) continue
+      const own = view.root === root
+      for (const e of this.entries(view.root)) {
+        if (e.chunk.kind !== 'function' || e.file.test || e.chunk.n < HOOK_MIN_TOKENS) continue
+        if (own && e.file.path === target.file.path && e.chunk.name === target.chunk.name) continue
+        if (callsEither(self, this.pairItem('', e))) continue
+        const v = e.vectors[0]
+        if (!v) continue
+        out.push({
+          ...(own ? {} : { repo: view.label }),
+          path: e.file.path,
+          line: e.chunk.line,
+          name: e.chunk.name,
+          score: dot(v, qv),
+          sameFolder: own && dirname(e.file.path) === folder,
+          exact: e.chunk.astHash === target.chunk.astHash,
+        })
+      }
     }
     out.sort((a, b) => b.score - a.score)
     return out.slice(0, k)
   }
 
   /** Existing functions at or above the hook thresholds for one function, exact copies first in rank. */
-  private leads(root: string, entry: Entry): Match[] {
-    return this.nearest(root, entry, 20)
+  private leads(root: string, entry: Entry, peers: Peer[]): Match[] {
+    return this.nearest(root, entry, 20, peers)
       .filter((m) => m.exact || m.score >= (m.sameFolder ? HOOK_SAME_FOLDER_THRESHOLD : HOOK_OTHER_FOLDER_THRESHOLD))
       .slice(0, HOOK_MAX_MATCHES)
   }
 
   /**
    * The hook check for one edited file: functions that are new or changed since the view last saw the file,
-   * each with the existing functions above the same-folder or other-folder threshold.
+   * each with the existing functions above the same-folder or other-folder threshold, in its own view and in
+   * the peers' views.
    */
-  async hookCheck(root: string, path: string): Promise<HookFinding[]> {
+  async hookCheck(root: string, path: string, peers: Peer[] = []): Promise<HookFinding[]> {
     const cls = classifyPath(path)
     if (!cls || cls.test || cls.lang === 'md' || cls.lang === 'mdx') return []
     const res = await this.reindexFile(root, path)
@@ -411,7 +426,7 @@ export class Engine {
     for (const c of changed) {
       const entry = this.entries(root).find((e) => e.file.path === path && e.chunk.textHash === c.textHash)
       if (!entry) continue
-      const matches = this.leads(root, entry)
+      const matches = this.leads(root, entry, peers)
       if (matches.length) findings.push({ path, line: c.line, name: c.name, matches })
     }
     findings.sort((a, b) => (b.matches[0]?.score ?? 0) - (a.matches[0]?.score ?? 0))
@@ -420,10 +435,11 @@ export class Engine {
 
   /**
    * The check of a whole branch: every production function added or changed in the view since the commit
-   * `base`, dirty files included, each with the existing functions above the hook thresholds. A function is
+   * `base`, dirty files included, each with the existing functions above the hook thresholds (in the peers'
+   * views too). A function is
    * compared with its own file at `base`, so one that moved to another file counts as new there.
    */
-  diffCheck(root: string, base: string): { checked: number; findings: HookFinding[] } {
+  diffCheck(root: string, base: string, peers: Peer[] = []): { checked: number; findings: HookFinding[] } {
     const view = this.views.get(root)
     if (!view) throw new Error(`${root} is not indexed`)
     const baseIds = new Map(listTree(root, base).map((e) => [e.path, e.blobId]))
@@ -456,7 +472,7 @@ export class Engine {
         const entry = entries.get(key(r.path, c.textHash))
         if (!entry) continue
         checked++
-        const matches = this.leads(root, entry)
+        const matches = this.leads(root, entry, peers)
         if (matches.length) findings.push({ path: r.path, line: c.line, name: c.name, matches })
       }
     }

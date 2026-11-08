@@ -13,7 +13,12 @@ rank the functions a dependency upgrade may touch. Indexing and queries run on t
   and embedding cosine fused by reciprocal rank.
 - **Cache**: outside the working copy, in `~/.cache/semindex` (or `$SEMINDEX_CACHE`), keyed by git blob id. A
   commit's view is `git ls-tree` plus the dirty files, so another branch or another worktree of the same repo
-  reuses everything already embedded, and an edit re-embeds only the functions whose text changed.
+  reuses everything already embedded, and an edit re-embeds only the functions whose text changed. The cache
+  also keeps a registry of the repositories it has seen, keyed by git common dir, so every worktree of a
+  repository shares one entry.
+- **Groups**: named sets of related repositories, searched together by the hook, `diff` and `similar`, so a
+  function copied from one repository into another is found. Groups live in the user's config, never in a
+  repository.
 - **Dependencies**: the direct dependencies, dev dependencies and peer dependencies in `package.json`, at the
   versions `package-lock.json` pins. Each package version is read from its registry tarball (never from
   `node_modules`), after checking the tarball against the lockfile's sha512 integrity; the package's code is
@@ -44,12 +49,17 @@ the release notes say how.
 
 ```sh
 semindex index ~/code/myrepo           # first run embeds everything (6,000 chunks on an M1 Pro: about 10 minutes)
+semindex forget ~/code/myrepo          # the hook stops acting in it; cached data stays until gc
 semindex query "split places evenly among classes"
 semindex similar src/lib/places.ts:73  # nearest functions to the one at that line
 semindex pairs                         # likely copies in the current repo, cross-folder first
 semindex pairs ../repo-a ../repo-b     # across repos, cross-repo first
 semindex diff origin/main              # functions the branch added or changed, with existing ones they resemble
 semindex status                        # cache location and size
+
+semindex group add web ../app ../ui-kit ../shared   # search these repositories together
+semindex group remove web ../shared    # take one out (no directories: remove the whole group)
+semindex group list                    # groups, their members' main working trees, and whether each is indexed
 
 semindex index --deps --parse-only     # read the locked dependencies' declarations and docs (seconds)
 semindex index --deps                  # ...and embed them, for query --deps
@@ -64,7 +74,13 @@ unix socket in the cache dir. The first command starts it; it exits after 30 min
 it; `--local` runs a command in-process instead.
 
 `diff` compares every function added or changed since the branch left the base (dirty files included) with
-the rest of the repo, with the hook's thresholds; it suits a review of a whole branch.
+the rest of the repo, and with the other members of its groups, with the hook's thresholds; it suits a review
+of a whole branch.
+
+`semindex index` also registers the repository: from then on the hook acts in it, in every worktree.
+`semindex forget [dir]` (default: the current directory) undoes that and takes the repository out of every
+group; what it has in the cache stays until `gc`. `query`, `similar`, `pairs` and `diff` work in any
+repository and index it on demand without registering it.
 
 `query --deps` searches only the dependency versions the working tree's lockfile pins, BM25 and embeddings
 fused as for code; each hit names `package@version`, the file inside the package and the declaration. Parsing
@@ -93,8 +109,30 @@ repo's parsed code, never embeddings. Tarballs come from the `resolved` URL with
 dependency on a registry that needs a login is reported as skipped.
 
 `gc` keeps every package version that a lockfile of a registered repo still pins (any of its worktrees) and
-removes the rest; `index --deps` and `query --deps` register a repo, and a repo or worktree that no longer
-exists drops out.
+removes the rest; `index`, `index --deps` and `query --deps` register a repo, and a repo or worktree that no
+longer exists drops out.
+
+## Groups
+
+Related repositories often copy code between each other, and a copy across repositories is the hardest kind to
+see. A group is a named set of repositories that the hook, `diff` and `similar` search together: a function
+written in one member is compared with the production functions of the other members too.
+
+- Groups are kept in `$XDG_CONFIG_HOME/semindex/config.json` (default `~/.config/semindex/config.json`), keyed
+  by each member's git common dir, so every worktree of a member belongs to its groups. A repository can be in
+  several groups; it is then compared with the members of all of them.
+- `group add` also registers each repository, as `semindex index` does, but embeds nothing. `group remove`
+  leaves the repositories registered.
+- Another member is compared as `semindex index <dir>` on its main working tree sees it: the current HEAD of
+  that checkout plus its dirty files. Other worktrees and branches of a member are not searched.
+- A match in another member names it (the directory name of its main working tree) before the path, is marked
+  `(other repo)`, and is held to the other-folder threshold of 0.75. Exact copies are reported as exact.
+- A member is loaded from the cache without embedding and without waiting; a member with missing vectors is
+  embedded in the background (the server stays up for it), and until then its unembedded functions are not
+  compared. `diff` and `similar` say which members are still being embedded. A member's view is rebuilt in
+  the background when it is more than a minute old, after the request that noticed it has answered.
+- `pairs` without arguments stays within the current repository; name several directories to pair across
+  repositories.
 
 A score is a lead, not a verdict, and no match is not proof that no duplicate exists. `skill/SKILL.md` explains
 how to read the scores; the thresholds and the measurements behind them are in `docs/thresholds.md`.
@@ -103,11 +141,13 @@ how to read the scores; the thresholds and the measurements behind them are in `
 
 `semindex hook` reads a PostToolUse hook input on stdin. After an Edit or Write it re-indexes that file and, for
 each function that is new or changed, lists existing functions scoring at least 0.80 in the same folder or 0.75
-in another folder, and exact copies. The list goes back to the model as `additionalContext`; when nothing passes,
-the hook prints nothing. A repo the server has not loaded yet is read from the cache without waiting for
-missing embeddings, which are then filled in the background.
+in another folder or another member of the repository's groups, and exact copies. The list goes back to the
+model as `additionalContext`; when nothing passes, the hook prints nothing. A repo the server has not loaded
+yet is read from the cache without waiting for missing embeddings, which are then filled in the background.
 
-To enable it in a repo, add to its `.claude/settings.json`:
+The hook acts only in repositories indexed with `semindex index` (or added to a group), in any of their
+worktrees. In any other repository it prints nothing, writes nothing to the cache and starts no server, so it
+can be installed once for every repository, in `~/.claude/settings.json`:
 
 ```json
 {
@@ -122,9 +162,12 @@ To enable it in a repo, add to its `.claude/settings.json`:
 }
 ```
 
-Index the repo once with `semindex index` before relying on the hook. Measured on a 6,000-chunk TypeScript repo
-(M1 Pro): about 0.65 s for a hook call that starts the server, 0.2 s when nothing changed and about 0.25 s when
-one new function is embedded with the server running.
+The same block in a repository's `.claude/settings.json` installs it for that repository only. Measured on a
+6,000-chunk TypeScript repo (M1 Pro): about 0.65 s for a hook call that starts the server, 0.2 s when nothing
+changed and about 0.25 s when one new function is embedded with the server running. On a 100-chunk repository
+in a group with six other repositories of 1,000 chunks in all (M1 Pro): about 2.1 s for the call that starts
+the server and loads the group, against 1.0 s for the same repository without the group, and 0.4 s for later
+calls with or without the group, of which starting the `semindex` process is 0.2 s.
 
 ## Development
 

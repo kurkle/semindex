@@ -33,6 +33,12 @@ export const QUERY_PREFIX = 'Represent this query for searching relevant code: '
 /** Store layout version; a change starts a fresh cache folder. */
 export const FORMAT_VERSION = 1
 
+/**
+ * Group members: a member's view (its main working tree) older than this is rebuilt in the background on the
+ * next use, so commits and edits there show up without a hook ever waiting for them.
+ */
+export const PEER_REFRESH_MS = 60 * 1000
+
 /** Server exits after this long without a request. */
 export const IDLE_TIMEOUT_MS = 30 * 60 * 1000
 

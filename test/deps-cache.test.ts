@@ -5,6 +5,7 @@ import { Deps } from '../src/deps/deps.js'
 import { DepStore, namespaceKey } from '../src/deps/store.js'
 import { Engine } from '../src/engine.js'
 import { repoOf } from '../src/git.js'
+import { Registry } from '../src/registry.js'
 import { Store } from '../src/store.js'
 import { FakeEmbedder, git, integrityOf, makeRepo, makeTarball, tempDir } from './helpers.js'
 
@@ -86,12 +87,15 @@ export function local(n: number) {
 function setup(fetcher: ReturnType<typeof registry>['fetcher'], cache = tempDir('semindex-deps-')) {
   const embedder = new FakeEmbedder()
   const store = new DepStore(cache, 'fake')
+  const repos = new Registry(cache)
   return {
     cache,
     embedder,
     store,
+    repos,
     deps: new Deps(
       store,
+      repos,
       async () => embedder,
       () => {},
       fetcher
@@ -179,7 +183,7 @@ describe('dependency cache', () => {
 
   it('gc removes versions no registered lockfile references and forgets repositories that are gone', async () => {
     const reg = registry()
-    const { deps, store } = setup(reg.fetcher)
+    const { deps, store, repos } = setup(reg.fetcher)
     const kept = makeRepo(files('1.0.0'))
     const gone = makeRepo(files('2.0.0'))
     await deps.build(repoInfo(kept), { embed: true })
@@ -191,7 +195,7 @@ describe('dependency cache', () => {
     expect(r.removed[0]).toMatch(/^lib@2\.0\.0-/)
     expect(r.kept).toBe(2)
     expect(r.repos).toBe(1)
-    expect(Object.values(store.readRegistry().repos)).toEqual([[realpathSync(kept)]])
+    expect(Object.values(repos.read())).toEqual([{ roots: [realpathSync(kept)] }])
     expect(deps.gc().removed).toEqual([])
   })
 })
