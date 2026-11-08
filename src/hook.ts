@@ -23,6 +23,12 @@ export function formatFindings(findings: HookFinding[]): string {
   const lines = [
     'semindex: functions just written resemble existing ones. A score is a lead, not a verdict: read the match before reusing it or writing a copy.',
   ]
+  return [...lines, ...findingLines(findings)].join('\n')
+}
+
+/** One block per function, its matches indented below it; shared by the hook and `semindex diff`. */
+export function findingLines(findings: HookFinding[]): string[] {
+  const lines: string[] = []
   for (const f of findings) {
     lines.push(`${f.name} (${f.path}:${f.line}) resembles:`)
     for (const m of f.matches) {
@@ -31,7 +37,7 @@ export function formatFindings(findings: HookFinding[]): string {
       lines.push(`  ${tag}  ${m.path}:${m.line}  ${m.name}  (${where})`)
     }
   }
-  return lines.join('\n')
+  return lines
 }
 
 /**

@@ -80,6 +80,32 @@ describe('Engine.index', () => {
   })
 })
 
+describe('Engine.diffCheck', () => {
+  it('checks the functions a branch adds and lists the existing one a copy resembles', async () => {
+    const { repo, engine } = setup()
+    git(repo, 'checkout', '-q', '-b', 'task')
+    writeFiles(repo, { 'src/pages/day.ts': PLACES.replace('distributePlacesAmongClasses', 'splitPlacesPerDay') })
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-q', '-m', 'copy')
+    await engine.index(repo)
+    const r = engine.diffCheck(repo, 'main')
+    expect(r.checked).toBe(1)
+    expect(r.findings).toHaveLength(1)
+    expect(r.findings[0]).toMatchObject({ path: 'src/pages/day.ts', name: 'splitPlacesPerDay' })
+    expect(r.findings[0]?.matches[0]).toMatchObject({ name: 'distributePlacesAmongClasses', exact: true })
+  })
+
+  it('skips functions the base already had, also in a changed file, and counts dirty files', async () => {
+    const { repo, engine } = setup()
+    appendFileSync(join(repo, 'src/lib/places.ts'), '\nexport const unrelated = 1\n')
+    writeFiles(repo, { 'src/pages/day.ts': PLACES.replace('distributePlacesAmongClasses', 'splitPlacesPerDay') })
+    await engine.index(repo)
+    const r = engine.diffCheck(repo, 'HEAD')
+    expect(r.checked).toBe(1)
+    expect(r.findings.map((f) => f.name)).toEqual(['splitPlacesPerDay'])
+  })
+})
+
 describe('Engine.hookCheck', () => {
   it('lists the existing function a new copy resembles, and stays silent for an unrelated one', async () => {
     const { repo, engine } = setup()

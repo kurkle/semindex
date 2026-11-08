@@ -389,6 +389,13 @@ export class Engine {
     return out.slice(0, k)
   }
 
+  /** Existing functions at or above the hook thresholds for one function, exact copies first in rank. */
+  private leads(root: string, entry: Entry): Match[] {
+    return this.nearest(root, entry, 20)
+      .filter((m) => m.exact || m.score >= (m.sameFolder ? HOOK_SAME_FOLDER_THRESHOLD : HOOK_OTHER_FOLDER_THRESHOLD))
+      .slice(0, HOOK_MAX_MATCHES)
+  }
+
   /**
    * The hook check for one edited file: functions that are new or changed since the view last saw the file,
    * each with the existing functions above the same-folder or other-folder threshold.
@@ -404,14 +411,57 @@ export class Engine {
     for (const c of changed) {
       const entry = this.entries(root).find((e) => e.file.path === path && e.chunk.textHash === c.textHash)
       if (!entry) continue
-      const matches = this.nearest(root, entry, 20).filter(
-        (m) => m.exact || m.score >= (m.sameFolder ? HOOK_SAME_FOLDER_THRESHOLD : HOOK_OTHER_FOLDER_THRESHOLD)
-      )
-      if (matches.length)
-        findings.push({ path, line: c.line, name: c.name, matches: matches.slice(0, HOOK_MAX_MATCHES) })
+      const matches = this.leads(root, entry)
+      if (matches.length) findings.push({ path, line: c.line, name: c.name, matches })
     }
     findings.sort((a, b) => (b.matches[0]?.score ?? 0) - (a.matches[0]?.score ?? 0))
     return findings.slice(0, HOOK_MAX_FUNCTIONS)
+  }
+
+  /**
+   * The check of a whole branch: every production function added or changed in the view since the commit
+   * `base`, dirty files included, each with the existing functions above the hook thresholds. A function is
+   * compared with its own file at `base`, so one that moved to another file counts as new there.
+   */
+  diffCheck(root: string, base: string): { checked: number; findings: HookFinding[] } {
+    const view = this.views.get(root)
+    if (!view) throw new Error(`${root} is not indexed`)
+    const baseIds = new Map(listTree(root, base).map((e) => [e.path, e.blobId]))
+    const changed = [...view.files.values()].filter(
+      (r) => !r.test && r.lang !== 'md' && r.lang !== 'mdx' && baseIds.get(r.path) !== r.blobId
+    )
+    const baseRefs = changed.flatMap((r) => {
+      const blobId = baseIds.get(r.path)
+      return blobId ? [{ ...r, blobId }] : []
+    })
+    const unparsed = baseRefs.filter((r) => !this.blob(r))
+    const contents = readBlobs(
+      root,
+      unparsed.map((r) => r.blobId)
+    )
+    for (const r of unparsed) {
+      const content = contents.get(r.blobId)
+      if (content) this.parse(r, content.toString('utf8'))
+    }
+    const key = (path: string, textHash: string) => `${path}\0${textHash}`
+    const before = new Set(
+      baseRefs.flatMap((r) => (this.blob(r)?.extracted.chunks ?? []).map((c) => key(r.path, c.textHash)))
+    )
+    const entries = new Map(this.entries(root).map((e) => [key(e.file.path, e.chunk.textHash), e]))
+    let checked = 0
+    const findings: HookFinding[] = []
+    for (const r of changed) {
+      for (const c of this.blob(r)?.extracted.chunks ?? []) {
+        if (c.kind !== 'function' || c.n < HOOK_MIN_TOKENS || before.has(key(r.path, c.textHash))) continue
+        const entry = entries.get(key(r.path, c.textHash))
+        if (!entry) continue
+        checked++
+        const matches = this.leads(root, entry)
+        if (matches.length) findings.push({ path: r.path, line: c.line, name: c.name, matches })
+      }
+    }
+    findings.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line)
+    return { checked, findings }
   }
 
   pairItem(repo: string, e: Entry): PairItem {

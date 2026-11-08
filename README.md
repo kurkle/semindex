@@ -38,12 +38,16 @@ semindex query "split places evenly among classes"
 semindex similar src/lib/places.ts:73  # nearest functions to the one at that line
 semindex pairs                         # likely copies in the current repo, cross-folder first
 semindex pairs ../repo-a ../repo-b     # across repos, cross-repo first
+semindex diff origin/main              # functions the branch added or changed, with existing ones they resemble
 semindex status                        # cache location and size
 ```
 
 The commands talk to a resident server (`semindex serve`) that keeps the model and indexes in memory behind a
 unix socket in the cache dir. The first command starts it; it exits after 30 minutes idle. `semindex stop` ends
 it; `--local` runs a command in-process instead.
+
+`diff` compares every function added or changed since the branch left the base (dirty files included) with
+the rest of the repo, with the hook's thresholds; it suits a review of a whole branch.
 
 A score is a lead, not a verdict, and no match is not proof that no duplicate exists. `skill/SKILL.md` explains
 how to read the scores; the thresholds and the measurements behind them are in `docs/thresholds.md`.
