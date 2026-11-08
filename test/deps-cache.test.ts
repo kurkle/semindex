@@ -161,6 +161,22 @@ describe('dependency cache', () => {
     expect(hits[0]).toMatchObject({ package: 'lib', version: '2.0.0', path: 'index.d.ts', name: 'parse' })
   })
 
+  it('answers from BM25 at once and embeds in the background, then ranks with vectors too', async () => {
+    const { deps, embedder } = setup(registry().fetcher)
+    const repo = repoInfo(makeRepo(files('2.0.0')))
+    const first = await deps.search(repo, 'parses a date against a reference date')
+    expect(first.stats.embeddingInBackground).toBe(2)
+    expect(deps.embeddingRunning()).toBe(true)
+    expect(first.hits[0]).toMatchObject({ name: 'parse', cosine: null })
+    await deps.embedded()
+    expect(deps.embeddingRunning()).toBe(false)
+    expect(embedder.texts).toBeGreaterThan(0)
+    const second = await deps.search(repo, 'parses a date against a reference date')
+    expect(second.stats.embeddingInBackground).toBe(0)
+    expect(second.hits[0]?.name).toBe('parse')
+    expect(second.hits[0]?.cosine).toBeGreaterThan(0)
+  })
+
   it('gc removes versions no registered lockfile references and forgets repositories that are gone', async () => {
     const reg = registry()
     const { deps, store } = setup(reg.fetcher)

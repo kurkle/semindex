@@ -159,6 +159,11 @@ export class Service {
     return this.deps.gc()
   }
 
+  /** True while an index run or a background dependency embedding is going; the server stays up for it. */
+  busy(): boolean {
+    return this.inflight.size > 0 || this.deps.embeddingRunning()
+  }
+
   status() {
     return {
       cacheDir: this.cacheDir,

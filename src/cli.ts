@@ -110,10 +110,18 @@ function signatureLine(text: string, kind: string): string {
 
 function printDepHits(r: { hits: DepHit[]; stats: DepsStats }): void {
   for (const h of r.hits) {
-    console.log(`${h.cosine.toFixed(2)}  ${h.package}@${h.version}  ${h.path}:${h.line}  ${h.name}  (${h.kind})`)
+    console.log(
+      `${h.cosine === null ? ' bm25' : h.cosine.toFixed(2)}  ${h.package}@${h.version}  ${h.path}:${h.line}  ${h.name}  (${h.kind})`
+    )
     if (h.kind !== 'doc') console.log(`      ${signatureLine(h.text, h.kind)}`)
   }
   if (r.hits.length === 0) console.log('no matches')
+  if (r.stats.embeddingInBackground) {
+    console.log(
+      `${r.stats.embeddingInBackground} packages are being embedded in the background; until then their hits ` +
+        'come from keyword search alone (marked bm25). index --deps embeds them up front.'
+    )
+  }
   for (const k of r.stats.skipped) console.log(`skipped: ${k.reason}`)
 }
 

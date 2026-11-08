@@ -34,7 +34,8 @@ function canConnect(path: string): Promise<boolean> {
 
 /**
  * Serves one JSON request per connection over a unix socket: the client writes one line, the server answers
- * with zero or more {"log"} lines and one {"result"} or {"error"} line. Exits after IDLE_TIMEOUT_MS idle.
+ * with zero or more {"log"} lines and one {"result"} or {"error"} line. Exits after IDLE_TIMEOUT_MS without a
+ * request, and not while background indexing or embedding is still running.
  */
 export async function serve(service: Service, handler: Handler, idleMs = IDLE_TIMEOUT_MS): Promise<void> {
   mkdirSync(service.cacheDir, { recursive: true })
@@ -82,7 +83,7 @@ export async function serve(service: Service, handler: Handler, idleMs = IDLE_TI
   })
   const arm = () => {
     clearTimeout(timer)
-    if (active === 0) timer = setTimeout(shutdown, idleMs)
+    if (active === 0) timer = setTimeout(() => (service.busy() ? arm() : shutdown()), idleMs)
   }
   const shutdown = () => {
     server.close()
