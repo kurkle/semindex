@@ -1,8 +1,8 @@
 # semindex
 
-Local semantic index of code and docs for my own repos. It finds functions that do the same job as the one you
-just wrote, likely copies across folders and repos, and code or docs matching a description. Everything runs on
-this machine; nothing is uploaded. Dependency versions are a later step.
+Local semantic index of code and docs in git repositories. It finds functions that do the same job as the one
+you just wrote, likely copies across folders and repos, and code or docs matching a description. Indexing and
+queries run on the local machine.
 
 - **Code**: functions, methods and arrow functions bound to a name, from `.ts`, `.tsx`, `.js`, `.jsx` (TypeScript
   compiler API), each with an AST hash that ignores names, literals, types and JSDoc. Tests and mocks are indexed
@@ -33,7 +33,7 @@ an already downloaded copy instead.
 ## Use
 
 ```sh
-semindex index ~/code/myrepo           # first run embeds everything (koekalenteri: about 10 minutes)
+semindex index ~/code/myrepo           # first run embeds everything (6,000 chunks on an M1 Pro: about 10 minutes)
 semindex query "split places evenly among classes"
 semindex similar src/lib/places.ts:73  # nearest functions to the one at that line
 semindex pairs                         # likely copies in the current repo, cross-folder first
@@ -56,7 +56,7 @@ in another folder, and exact copies. The list goes back to the model as `additio
 the hook prints nothing. A repo the server has not loaded yet is read from the cache without waiting for
 missing embeddings, which are then filled in the background.
 
-Add to a repo's `.claude/settings.json` (this is documentation; nothing here installs it):
+To enable it in a repo, add to its `.claude/settings.json`:
 
 ```json
 {
@@ -71,9 +71,9 @@ Add to a repo's `.claude/settings.json` (this is documentation; nothing here ins
 }
 ```
 
-Index the repo once with `semindex index` before relying on the hook. Measured on koekalenteri (M1 Pro): about
-0.65 s for a hook call that starts the server, 0.2 s when nothing changed and about 0.25 s when one new function
-is embedded with the server running.
+Index the repo once with `semindex index` before relying on the hook. Measured on a 6,000-chunk TypeScript repo
+(M1 Pro): about 0.65 s for a hook call that starts the server, 0.2 s when nothing changed and about 0.25 s when
+one new function is embedded with the server running.
 
 ## Development
 

@@ -2,7 +2,7 @@
   "name": "semindex",
   "version": "0.1.0",
   "private": true,
-  "description": "Local semantic index of code and docs for your own repos",
+  "description": "Local semantic index of code and docs in git repositories",
   "license": "MIT",
   "type": "module",
   "bin": {
