@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
+import { absoluteDirs, parseFileSpec } from './args.js'
 import { call } from './client.js'
 import type { IndexStats, Match } from './engine.js'
 import type { HookInput } from './hook.js'
@@ -138,7 +139,7 @@ async function main(): Promise<void> {
       return
     }
     case 'index': {
-      const dirs = args.length ? args : [process.cwd()]
+      const dirs = absoluteDirs(args)
       const r = (await run('index', { dirs })) as IndexStats[]
       out(r, () => printIndex(r))
       return
@@ -156,15 +157,12 @@ async function main(): Promise<void> {
     case 'similar': {
       const spec = args[0]
       if (!spec) throw new Error('usage: semindex similar <file>[:line]')
-      const m = /^(.*?)(?::(\d+))?$/.exec(spec)
-      const r = (await run('similar', { file: m?.[1], line: m?.[2] ? Number(m[2]) : undefined, k })) as Parameters<
-        typeof printSimilar
-      >[0]
+      const r = (await run('similar', { ...parseFileSpec(spec), k })) as Parameters<typeof printSimilar>[0]
       out(r, () => printSimilar(r))
       return
     }
     case 'pairs': {
-      const dirs = args.length ? args : [process.cwd()]
+      const dirs = absoluteDirs(args)
       const threshold = values.threshold ? Number(values.threshold) : undefined
       const r = (await run('pairs', { dirs, threshold })) as Parameters<typeof printPairs>[0]
       out(r, () => printPairs(r, values.limit ? Number(values.limit) : 40))
