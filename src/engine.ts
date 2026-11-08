@@ -464,6 +464,29 @@ export class Engine {
     return { checked, findings }
   }
 
+  /**
+   * Production functions of a view with the package bindings each one uses, from the parsed chunks alone:
+   * vectors are not needed, so this works on a view indexed with `embed: false`.
+   */
+  packageUses(root: string): {
+    functions: number
+    using: { path: string; line: number; name: string; uses: string[] }[]
+  } {
+    const view = this.views.get(root)
+    if (!view) throw new Error(`${root} is not indexed`)
+    let functions = 0
+    const using: { path: string; line: number; name: string; uses: string[] }[] = []
+    for (const ref of view.files.values()) {
+      if (ref.test || ref.lang === 'md' || ref.lang === 'mdx') continue
+      for (const c of this.blob(ref)?.extracted.chunks ?? []) {
+        if (c.kind !== 'function') continue
+        functions++
+        if (c.uses?.length) using.push({ path: ref.path, line: c.line, name: c.name, uses: c.uses })
+      }
+    }
+    return { functions, using }
+  }
+
   pairItem(repo: string, e: Entry): PairItem {
     return {
       repo,

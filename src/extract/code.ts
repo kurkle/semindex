@@ -92,10 +92,88 @@ function collectCalls(node: ts.Node, out: Set<string>): void {
   ts.forEachChild(node, visit)
 }
 
+/** A module specifier that names a package (or a builtin), not a relative path or a subpath import. */
+export function isBareSpecifier(spec: string): boolean {
+  return spec.length > 0 && !/^[./#]/.test(spec)
+}
+
+interface Imported {
+  spec: string
+  /** The exported name, or `*` for a default or namespace binding. */
+  name: string
+}
+
+/** Local names bound by the file's imports from packages. */
+function packageImports(sf: ts.SourceFile): Map<string, Imported> {
+  const out = new Map<string, Imported>()
+  for (const st of sf.statements) {
+    if (ts.isImportEqualsDeclaration(st)) {
+      const ref = st.moduleReference
+      if (ts.isExternalModuleReference(ref) && ts.isStringLiteral(ref.expression)) {
+        const spec = ref.expression.text
+        if (isBareSpecifier(spec)) out.set(st.name.text, { spec, name: '*' })
+      }
+      continue
+    }
+    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue
+    const spec = st.moduleSpecifier.text
+    const clause = st.importClause
+    if (!clause || !isBareSpecifier(spec)) continue
+    if (clause.name) out.set(clause.name.text, { spec, name: '*' })
+    const nb = clause.namedBindings
+    if (nb && ts.isNamespaceImport(nb)) out.set(nb.name.text, { spec, name: '*' })
+    if (nb && ts.isNamedImports(nb)) {
+      for (const el of nb.elements) out.set(el.name.text, { spec, name: propName(el.propertyName ?? el.name, sf) })
+    }
+  }
+  return out
+}
+
+/** An identifier in a position that names a property or member rather than referring to a binding. */
+function isMemberName(n: ts.Identifier): boolean {
+  const p = n.parent
+  if (!p) return false
+  if ((ts.isPropertyAccessExpression(p) || ts.isQualifiedName(p)) && (ts.isQualifiedName(p) ? p.right : p.name) === n)
+    return true
+  if (
+    (ts.isPropertyAssignment(p) ||
+      ts.isPropertyDeclaration(p) ||
+      ts.isPropertySignature(p) ||
+      ts.isMethodDeclaration(p) ||
+      ts.isMethodSignature(p) ||
+      ts.isJsxAttribute(p) ||
+      ts.isGetAccessor(p) ||
+      ts.isSetAccessor(p)) &&
+    p.name === n
+  )
+    return true
+  return ts.isBindingElement(p) && p.propertyName === n
+}
+
+/** Imported package bindings a function refers to, namespace members resolved (`ns.format` uses `format`). */
+function collectUses(node: ts.Node, imports: Map<string, Imported>, out: Set<string>): void {
+  if (imports.size === 0) return
+  const visit = (n: ts.Node): void => {
+    if (ts.isIdentifier(n) && !isMemberName(n)) {
+      const imp = imports.get(n.text)
+      if (imp) {
+        const p = n.parent
+        let name = imp.name
+        if (name === '*' && p && ts.isPropertyAccessExpression(p) && p.expression === n) name = p.name.text
+        else if (name === '*' && p && ts.isQualifiedName(p) && p.left === n) name = p.right.text
+        out.add(`${imp.spec}:${name}`)
+      }
+    }
+    ts.forEachChild(n, visit)
+  }
+  ts.forEachChild(node, visit)
+}
+
 /** Named functions, methods and arrow functions bound to a name, nested ones included. */
 export function extractCode(path: string, source: string, lang: Lang): Chunk[] {
   const text = normalizeNewlines(source)
   const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, SCRIPT_KIND[lang] ?? ts.ScriptKind.TS)
+  const imports = packageImports(sf)
   const chunks: Chunk[] = []
   const visit = (node: ts.Node): void => {
     if (isNamedFunction(node) && node.body) {
@@ -109,6 +187,8 @@ export function extractCode(path: string, source: string, lang: Lang): Chunk[] {
         const calls = new Set<string>()
         collectCalls(node, calls)
         calls.delete(name)
+        const uses = new Set<string>()
+        collectUses(node, imports, uses)
         chunks.push({
           kind: 'function',
           name,
@@ -118,6 +198,7 @@ export function extractCode(path: string, source: string, lang: Lang): Chunk[] {
           astHash: sha1(toks.join(' ')).slice(0, 16),
           textHash: sha1(body).slice(0, 16),
           calls: [...calls].sort(),
+          ...(uses.size ? { uses: [...uses].sort() } : {}),
           exported: isExported(decl),
           text: body,
         })

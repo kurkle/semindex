@@ -6,8 +6,17 @@ import { MAX_TOKENS, QUERY_PREFIX } from './constants.js'
 
 export interface Embedder {
   readonly dims: number
-  /** Each text gives one or more unit vectors: one per part of at most MAX_TOKENS tokens. */
-  embed(texts: string[], opts?: { query?: boolean }): Promise<Float32Array[][]>
+  /**
+   * Each text gives one or more unit vectors: one per part of at most MAX_TOKENS tokens, or with `firstPart`
+   * only the first part (the text cut at MAX_TOKENS).
+   */
+  embed(texts: string[], opts?: EmbedOptions): Promise<Float32Array[][]>
+}
+
+export interface EmbedOptions {
+  /** A search query: the query prefix is added and the text cut at MAX_TOKENS. */
+  query?: boolean
+  firstPart?: boolean
 }
 
 /** Batches of similar length: padding is what makes large mixed batches slow on CPU. */
@@ -67,10 +76,14 @@ export class OnnxEmbedder implements Embedder {
     return parts
   }
 
-  async embed(texts: string[], opts: { query?: boolean } = {}): Promise<Float32Array[][]> {
+  async embed(texts: string[], opts: EmbedOptions = {}): Promise<Float32Array[][]> {
     const pieces: Piece[] = []
     texts.forEach((t, owner) => {
-      const parts = opts.query ? [this.tokens(QUERY_PREFIX + t).slice(0, MAX_TOKENS - 2)] : this.split(t)
+      const parts = opts.query
+        ? [this.tokens(QUERY_PREFIX + t).slice(0, MAX_TOKENS - 2)]
+        : opts.firstPart
+          ? [this.tokens(t.slice(0, MAX_TOKENS * 16)).slice(0, MAX_TOKENS - 2)]
+          : this.split(t)
       for (const ids of parts) pieces.push({ owner, ids })
     })
     const order = pieces.map((_, i) => i).sort((a, b) => (pieces[a]?.ids.length ?? 0) - (pieces[b]?.ids.length ?? 0))

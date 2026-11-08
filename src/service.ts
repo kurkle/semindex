@@ -1,8 +1,10 @@
 import { realpathSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
+import { type DepHit, Deps, type DepsStats, type UpgradeReport } from './deps/deps.js'
+import { DepStore } from './deps/store.js'
 import { OnnxEmbedder } from './embed.js'
 import { Engine, type HookFinding, type IndexStats } from './engine.js'
-import { mergeBase, repoOf } from './git.js'
+import { mergeBase, type RepoInfo, repoOf } from './git.js'
 import { type HookInput, hookFilePath, hookOutput } from './hook.js'
 import { ensureModel, MODEL } from './model.js'
 import { Store } from './store.js'
@@ -25,6 +27,7 @@ export interface PairRow {
 /** The operations behind the CLI, run in the resident server or in-process with --local. */
 export class Service {
   readonly engine: Engine
+  readonly deps: Deps
   private readonly inflight = new Map<string, Promise<IndexStats>>()
 
   constructor(
@@ -33,12 +36,17 @@ export class Service {
   ) {
     const store = new Store(cacheDir, MODEL.slug)
     this.engine = new Engine(store, async () => OnnxEmbedder.load(await ensureModel(cacheDir, log)), log)
+    this.deps = new Deps(new DepStore(cacheDir, MODEL.slug), () => this.engine.embedder(), log)
+  }
+
+  private repoOf(dir: string): RepoInfo {
+    const repo = repoOf(resolve(dir))
+    if (!repo) throw new Error(`${dir} is not inside a git working tree`)
+    return repo
   }
 
   private rootOf(dir: string): string {
-    const repo = repoOf(resolve(dir))
-    if (!repo) throw new Error(`${dir} is not inside a git working tree`)
-    return repo.root
+    return this.repoOf(dir).root
   }
 
   /** One index run per working tree at a time; a second caller waits for the running one. */
@@ -126,7 +134,36 @@ export class Service {
     return hookOutput(findings)
   }
 
+  /** Parses the locked direct dependencies of a working tree, and with `embed` embeds them. */
+  indexDeps(dir: string, opts: { embed?: boolean; packages?: string[] } = {}): Promise<DepsStats> {
+    return this.deps.build(this.repoOf(dir), opts)
+  }
+
+  queryDeps(dir: string, text: string, k = 10, packages?: string[]): Promise<{ hits: DepHit[]; stats: DepsStats }> {
+    return this.deps.search(this.repoOf(dir), text, { k, packages })
+  }
+
+  /**
+   * Upgrade impact since the branch left `base`: the repository's own code is parsed (no embedding) for the
+   * package bindings each function uses, and compared with the API diff of every bumped dependency.
+   */
+  async upgrade(dir: string, base: string): Promise<UpgradeReport> {
+    const repo = this.repoOf(dir)
+    // Straight to the engine, not through `index`: a running embedding pass must not hold this up.
+    await this.engine.index(repo.root, { embed: false })
+    const commit = mergeBase(repo.root, base)
+    return this.deps.upgrade(repo, commit, this.engine.packageUses(repo.root))
+  }
+
+  gc() {
+    return this.deps.gc()
+  }
+
   status() {
-    return { cacheDir: this.cacheDir, model: MODEL.id, usage: this.engine.store.usage() }
+    return {
+      cacheDir: this.cacheDir,
+      model: MODEL.id,
+      usage: { ...this.engine.store.usage(), dependencies: this.deps.store.usage() },
+    }
   }
 }

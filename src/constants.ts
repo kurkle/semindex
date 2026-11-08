@@ -35,3 +35,15 @@ export const FORMAT_VERSION = 1
 
 /** Server exits after this long without a request. */
 export const IDLE_TIMEOUT_MS = 30 * 60 * 1000
+
+/**
+ * Dependency tarballs: the largest compressed tarball and unpacked size accepted, the largest single file kept,
+ * and the download time limit. docs/dependencies.md has the sizes these were set against.
+ */
+export const DEP_TARBALL_MAX_BYTES = 64 * 1024 * 1024
+export const DEP_UNPACKED_MAX_BYTES = 512 * 1024 * 1024
+export const DEP_FILE_MAX_BYTES = 16 * 1024 * 1024
+export const DEP_FETCH_TIMEOUT_MS = 120_000
+
+/** Tarballs fetched and parsed at the same time. */
+export const DEP_FETCH_CONCURRENCY = 6
