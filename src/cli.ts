@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { absoluteDirs, parseFileSpec } from './args.js'
 import { call } from './client.js'
-import type { IndexStats, Match } from './engine.js'
-import type { HookInput } from './hook.js'
+import type { HookFinding, IndexStats, Match } from './engine.js'
+import { findingLines, type HookInput } from './hook.js'
 import { type Request, serve } from './server.js'
 import { type PairRow, type SearchHit, Service } from './service.js'
 import { defaultCacheDir } from './store.js'
@@ -15,6 +15,7 @@ const HELP = `semindex: local semantic index of code and docs
   semindex query <text> [-k N]       hybrid search (BM25 + embeddings) for a description
   semindex similar <file>[:line]     functions nearest to the function at that line
   semindex pairs [dir...]            likely copies across one or more repos, cross-folder first
+  semindex diff [base]               functions added or changed since the branch left base (default origin/HEAD)
   semindex serve                     run the resident server (started on demand by the other commands)
   semindex stop                      stop the resident server
   semindex hook                      Claude Code PostToolUse hook: reads the hook JSON on stdin
@@ -35,6 +36,8 @@ async function handle(service: Service, req: Request): Promise<unknown> {
       return service.query(p.dir as string, p.text as string, p.k as number, p.tests as boolean)
     case 'similar':
       return service.similar(p.file as string, p.line as number | undefined, p.k as number)
+    case 'diff':
+      return service.diff(p.dir as string, p.base as string)
     case 'pairs':
       return service.pairs(p.dirs as string[], p.threshold as number | undefined)
     case 'hook':
@@ -69,6 +72,14 @@ function printSimilar(r: { target: { path: string; line: number; name: string };
     console.log(`${tag}  ${m.path}:${m.line}  ${m.name}  (${m.sameFolder ? 'same folder' : 'other folder'})`)
   }
   console.log(NOT_PROOF)
+}
+
+function printDiff(r: { base: string; checked: number; findings: HookFinding[] }, base: string): void {
+  console.log(
+    `${r.checked} functions added or changed since ${base} (${r.base.slice(0, 9)}); ${r.findings.length} resemble existing ones`
+  )
+  for (const line of findingLines(r.findings)) console.log(line)
+  console.log(`A score is a lead, not a verdict. ${NOT_PROOF}`)
 }
 
 function side(s: PairRow['a'], multi: boolean): string {
@@ -159,6 +170,12 @@ async function main(): Promise<void> {
       if (!spec) throw new Error('usage: semindex similar <file>[:line]')
       const r = (await run('similar', { ...parseFileSpec(spec), k })) as Parameters<typeof printSimilar>[0]
       out(r, () => printSimilar(r))
+      return
+    }
+    case 'diff': {
+      const base = args[0] ?? 'origin/HEAD'
+      const r = (await run('diff', { dir: process.cwd(), base })) as Parameters<typeof printDiff>[0]
+      out(r, () => printDiff(r, base))
       return
     }
     case 'pairs': {

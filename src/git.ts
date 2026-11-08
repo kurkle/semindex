@@ -46,6 +46,11 @@ export function repoOf(dir: string): RepoInfo | null {
   return { root, commonDir, head }
 }
 
+/** The commit where HEAD branched from `rev`, the base `git diff rev...HEAD` compares with. */
+export function mergeBase(root: string, rev: string): string {
+  return git(root, ['merge-base', rev, 'HEAD']).trim()
+}
+
 /** Regular files of the HEAD commit with their blob ids. Symlinks and submodules are left out. */
 export function listTree(root: string, rev = 'HEAD', path?: string): TreeEntry[] {
   let out: string

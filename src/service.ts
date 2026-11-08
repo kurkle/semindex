@@ -1,8 +1,8 @@
 import { realpathSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import { OnnxEmbedder } from './embed.js'
-import { Engine, type IndexStats } from './engine.js'
-import { repoOf } from './git.js'
+import { Engine, type HookFinding, type IndexStats } from './engine.js'
+import { mergeBase, repoOf } from './git.js'
 import { type HookInput, hookFilePath, hookOutput } from './hook.js'
 import { ensureModel, MODEL } from './model.js'
 import { Store } from './store.js'
@@ -75,6 +75,14 @@ export class Service {
       target: { path, line: target.chunk.line, name: target.chunk.name },
       matches: this.engine.nearest(root, target, k),
     }
+  }
+
+  /** Functions added or changed since the branch left `base`, with the existing functions they resemble. */
+  async diff(dir: string, base: string): Promise<{ base: string; checked: number; findings: HookFinding[] }> {
+    const root = this.rootOf(dir)
+    await this.index(root)
+    const commit = mergeBase(root, base)
+    return { base: commit, ...this.engine.diffCheck(root, commit) }
   }
 
   async pairs(dirs: string[], threshold?: number): Promise<{ pairs: PairRow[]; exact: PairRow[]; functions: number }> {
