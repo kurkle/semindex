@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -36,38 +35,17 @@ function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
-function githubToken(): string | undefined {
-  const env = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
-  if (env) return env
-  try {
-    return execFileSync('gh', ['auth', 'token'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Downloads the model files from the release once. The repository is private, so the download needs a GitHub
- * token: GH_TOKEN, GITHUB_TOKEN or the gh CLI's login.
- */
+/** Downloads the model files from the public release once, each checked against its pinned sha256. */
 export async function ensureModel(cacheDir: string, log: (msg: string) => void = () => {}): Promise<string> {
   const dir = modelDir(cacheDir)
   if (isModelCached(cacheDir)) return dir
   if (process.env.SEMINDEX_MODEL_DIR) throw new Error(`SEMINDEX_MODEL_DIR=${dir} lacks the model files`)
-  const token = githubToken()
-  if (!token) throw new Error('The model download needs a GitHub token: set GH_TOKEN or log in with `gh auth login`.')
-  const headers = { Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' }
-  const rel = await fetch(`https://api.github.com/repos/${MODEL.repo}/releases/tags/${MODEL.tag}`, { headers })
-  if (!rel.ok) throw new Error(`Release ${MODEL.tag} of ${MODEL.repo}: HTTP ${rel.status}`)
-  const assets = ((await rel.json()) as { assets: { name: string; url: string }[] }).assets
   mkdirSync(dir, { recursive: true })
   for (const [name, sha] of Object.entries(MODEL.files)) {
     const target = join(dir, name)
     if (existsSync(target)) continue
-    const asset = assets.find((a) => a.name === name)
-    if (!asset) throw new Error(`Release ${MODEL.tag} has no asset ${name}`)
     log(`semindex: downloading ${name}`)
-    const res = await fetch(asset.url, { headers: { ...headers, Accept: 'application/octet-stream' } })
+    const res = await fetch(`https://github.com/${MODEL.repo}/releases/download/${MODEL.tag}/${name}`)
     if (!res.ok || !res.body) throw new Error(`Download of ${name}: HTTP ${res.status}`)
     const part = `${target}.part`
     await pipeline(Readable.fromWeb(res.body), createWriteStream(part))
