@@ -113,10 +113,10 @@ Measured on 9 November 2026: 22 functions that koekalenteri's history shows were
 each checked with `semindex diff` against the commit before the copy, and six pull requests with no known copy
 (52 new or changed functions) as controls. 13 of the copies have at least 30 AST tokens; nine are shorter.
 
-| Hook threshold                        | Copies listed | Control leads (52 functions) |
-| :------------------------------------ | ------------: | ---------------------------: |
-| 0.80 same folder, 0.75 other folder   |          6/22 |                            0 |
-| 0.75 everywhere                       |          8/22 |                            1 |
+| Hook threshold                      | Copies listed | Control leads (52 functions) |
+| :---------------------------------- | ------------: | ---------------------------: |
+| 0.80 same folder, 0.75 other folder |          6/22 |                            0 |
+| 0.75 everywhere                     |          8/22 |                            1 |
 
 The two copies 0.75 adds scored 0.776 and 0.796 against their originals, ranked first, in the same folder. The
 control lead is `writeEventFields` against `writeMigratedEvent` (0.779, same file): two thin wrappers of the
