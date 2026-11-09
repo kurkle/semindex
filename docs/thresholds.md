@@ -103,5 +103,10 @@ Chosen:
   0.895 (caught by anything up to 0.85) and one at 0.671 (missed, as with jina). Catching the 0.671 copy needs
   0.65, which fires for one function in five. 0.75 keeps the other-folder bar softer than the same-folder one
   at a firing rate of about one in twenty, and is a value to revisit with more tasks.
-- Minimum 30 AST tokens for the hook (the pairing rule keeps 60): the audit-key copy that was caught has 46.
-- An identical AST hash is always listed, as an exact copy.
+- Minimum 30 AST tokens for a match by score (the pairing rule keeps 60): the audit-key copy that was caught
+  has 46. A shorter function is still compared, and listed with its exact copies only.
+- An identical AST hash is always listed, as an exact copy. When either function is under 30 tokens the text
+  has to match as well, apart from the declared name and whitespace: at that length an identical AST hash
+  joins functions that do different jobs. In six pull requests with no known copy, the AST hash alone gave six
+  short functions such matches (`isMicrochip` with `isPublicRegistrationOperationField`, three page components
+  that each wrap a different component in the same guard); the text rule gave none.

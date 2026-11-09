@@ -19,7 +19,9 @@ groupParticipantsByClass (src/lib/registration.ts:120) resembles:
 
 - The score is the cosine similarity of two functions' embeddings (CodeRankEmbed). It says the two read alike,
   not that they do the same job.
-- `exact copy` means the same code up to names and literals (identical AST hash).
+- `exact copy` means the same code up to names and literals (identical AST hash). For a function under 30 AST
+  tokens it means the same text apart from the function's own name and whitespace, and such a function is
+  listed with its exact copies only.
 - A match is listed from 0.80 in the same folder and from 0.75 in another folder. Copies in another folder are
   the ones you cannot see from the file you edit, so they get the softer bar.
 - When the repository is in a group, matches can come from the other repositories of the group. They are
