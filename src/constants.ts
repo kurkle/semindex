@@ -9,11 +9,11 @@ export const PAIR_THRESHOLD = 0.76
 /** Pairing rule: both functions need at least this many AST tokens (5 Nov rule, unchanged). */
 export const PAIR_MIN_TOKENS = 60
 
-/** Hook, same folder: true copies in the tasks scored 0.81 to 0.91, a different-job match 0.68; fires for 8.6 % of functions. */
-export const HOOK_SAME_FOLDER_THRESHOLD = 0.8
-
-/** Hook, other folder: softer, fires for 4.6 % of functions; the tasks do not separate 0.70 to 0.85 (docs/thresholds.md). */
-export const HOOK_OTHER_FOLDER_THRESHOLD = 0.75
+/**
+ * Hook: one bar for every folder and repository. At 0.80 in the same folder three of 22 known copies in
+ * koekalenteri history were missed with the original ranked first or second (0.723 to 0.796); docs/thresholds.md.
+ */
+export const HOOK_THRESHOLD = 0.75
 
 /** Hook: functions shorter than this are not checked or listed; the shortest flagged copy in the tasks had 46. */
 export const HOOK_MIN_TOKENS = 30
