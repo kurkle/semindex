@@ -56,6 +56,7 @@ semindex pairs                         # likely copies in the current repo, cros
 semindex pairs ../repo-a ../repo-b     # across repos, cross-repo first
 semindex diff origin/main              # functions the branch added or changed, with existing ones they resemble
 semindex status                        # cache location and size
+semindex report --since 2026-11-01     # what the logged hook runs did, and what became of each finding
 
 semindex group add web ../app ../ui-kit ../shared   # search these repositories together
 semindex group remove web ../shared    # take one out (no directories: remove the whole group)
@@ -146,8 +147,8 @@ model as `additionalContext`; when nothing passes, the hook prints nothing. A re
 yet is read from the cache without waiting for missing embeddings, which are then filled in the background.
 
 The hook acts only in repositories indexed with `semindex index` (or added to a group), in any of their
-worktrees. In any other repository it prints nothing, writes nothing to the cache and starts no server, so it
-can be installed once for every repository, in `~/.claude/settings.json`:
+worktrees. In any other repository it prints nothing, writes nothing to the cache but its line in the event log
+and starts no server, so it can be installed once for every repository, in `~/.claude/settings.json`:
 
 ```json
 {
@@ -168,6 +169,41 @@ changed and about 0.25 s when one new function is embedded with the server runni
 in a group with six other repositories of 1,000 chunks in all (M1 Pro): about 2.1 s for the call that starts
 the server and loads the group, against 1.0 s for the same repository without the group, and 0.4 s for later
 calls with or without the group, of which starting the `semindex` process is 0.2 s.
+
+### Event log and report
+
+Every `semindex hook` run appends one JSON line to `events.jsonl` in the cache dir. A line has `ts`,
+`session_id` and `transcript_path` from the hook input, `cwd`, `tool_name`, `file` as the tool named it,
+`duration_ms` and `outcome`; for a file inside git also `repo` (the folder that holds the git common dir),
+`root`, `gitDir`, `branch`, `head` and `path` relative to the root. `outcome` is one of:
+
+- `finding`: the message named functions; `findings` lists each one's `name`, `path` and `line` with its
+  `matches` (`repo` for another group member, `path`, `line`, `name`, `score`, `exact`, `sameFolder`).
+- `none`: the file was checked and nothing passed the thresholds.
+- `skipped`, with `reason`: `not a PostToolUse event`, `tool not handled`, `no file path`, `file not found`,
+  `not in a git repository`, `repo not indexed`, `not a code file` or `test file`.
+- `error`, with `message`: the check failed, the input was not JSON, or the run got SIGTERM (Claude Code's
+  hook timeout) after it started; `killed by SIGTERM` is logged then. A run killed before Node has loaded the
+  CLI, or by SIGKILL, logs nothing.
+
+A failed write is ignored and the hook goes on. At 8 MB `events.jsonl` is renamed to `events.1.jsonl`,
+replacing the older one, and a new file starts.
+
+`semindex report [--since DATE] [--json]` reads both files and prints the runs per outcome with the median and
+95th percentile duration, the count of each skip reason and error message, and, grouped by repository, the
+fate of every flagged function, read from git at the time of the report:
+
+- the commit judged is the tip of the event's branch, or when that tip is merged into `origin/main`, the commit
+  on `origin/main`'s first-parent line that merged it. A branch whose ref is gone is looked up by a GitHub merge
+  subject (`Merge pull request #N from owner/<branch>`) of a merge that contains the event's `head`.
+- `kept`: a function of that name is in the file at that commit. This says only that it is still there, not
+  that the match was a false lead.
+- `replaced-by-match`: the function is gone and the file refers to the name of one of its matches (a match
+  defined in the same file counts only where it is used, not where it is defined).
+- `removed`: the function is gone and no match is referred to, or the file is gone.
+- `unknown`: the branch, the commit or the repository is gone, or the event was on a detached HEAD.
+
+Only commits are read: work not committed at the branch tip counts as not there.
 
 ## Development
 

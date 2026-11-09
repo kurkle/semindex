@@ -169,3 +169,51 @@ export function mainWorktree(commonDir: string): string | null {
   if (!root || first.includes('bare') || !existsSync(root)) return null
   return realpathSync(root)
 }
+
+/** The branch checked out in a working tree, or null for a detached HEAD or a directory outside git. */
+export function currentBranch(root: string): string | null {
+  try {
+    return git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).trim() || null
+  } catch {
+    return null
+  }
+}
+
+/** The commit a revision names, or null when the repository does not have it. */
+export function resolveCommit(root: string, rev: string): string | null {
+  try {
+    return git(root, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]).trim() || null
+  } catch {
+    return null
+  }
+}
+
+/** True when commit `a` is an ancestor of (or the same as) commit `b`. */
+export function isAncestor(root: string, a: string, b: string): boolean {
+  return spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', a, b], { stdio: 'ignore' }).status === 0
+}
+
+/** The commits on the first-parent line of `to` that descend from `from`, oldest first. */
+export function firstParentDescendants(root: string, from: string, to: string): string[] {
+  try {
+    return git(root, ['rev-list', '--first-parent', '--ancestry-path', '--reverse', `${from}..${to}`])
+      .split('\n')
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+/** The merge commits on the first-parent line of `rev`, newest first, with their subjects. */
+export function firstParentMerges(root: string, rev: string): { id: string; subject: string }[] {
+  let out: string
+  try {
+    out = git(root, ['log', '--first-parent', '--merges', '--format=%H %s', rev])
+  } catch {
+    return []
+  }
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => ({ id: l.slice(0, l.indexOf(' ')), subject: l.slice(l.indexOf(' ') + 1) }))
+}

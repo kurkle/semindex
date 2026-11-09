@@ -6,16 +6,28 @@ export interface HookInput {
   tool_name?: string
   tool_input?: { file_path?: string; path?: string }
   cwd?: string
+  session_id?: string
+  transcript_path?: string
 }
 
 const TOOLS = new Set(['Edit', 'Write', 'MultiEdit'])
 
-/** The absolute path of the file an Edit, Write or MultiEdit call wrote, or null for anything else. */
-export function hookFilePath(input: HookInput): string | null {
-  if (input.hook_event_name && input.hook_event_name !== 'PostToolUse') return null
-  if (!input.tool_name || !TOOLS.has(input.tool_name)) return null
+/** The file path a tool call names, if any. */
+function namedPath(input: HookInput): string | null {
   const p = input.tool_input?.file_path ?? input.tool_input?.path
   return typeof p === 'string' && p ? p : null
+}
+
+/** Why the hook does nothing with this input on its face (event, tool, missing path), or null when it may act. */
+export function hookInputSkip(input: HookInput): string | null {
+  if (input.hook_event_name && input.hook_event_name !== 'PostToolUse') return 'not a PostToolUse event'
+  if (!input.tool_name || !TOOLS.has(input.tool_name)) return 'tool not handled'
+  return namedPath(input) ? null : 'no file path'
+}
+
+/** The absolute path of the file an Edit, Write or MultiEdit call wrote, or null for anything else. */
+export function hookFilePath(input: HookInput): string | null {
+  return hookInputSkip(input) ? null : namedPath(input)
 }
 
 /** Text of the message: one block per new function, its matches indented below it. */

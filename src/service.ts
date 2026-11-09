@@ -6,33 +6,45 @@ import { type DepHit, Deps, type DepsStats, type UpgradeReport } from './deps/de
 import { DepStore } from './deps/store.js'
 import { type Embedder, OnnxEmbedder } from './embed.js'
 import { Engine, type HookFinding, type IndexStats, type Peer } from './engine.js'
+import { classifyPath } from './extract/index.js'
 import { mainWorktree, mergeBase, type RepoInfo, repoOf } from './git.js'
-import { type HookInput, hookFilePath, hookOutput } from './hook.js'
+import { type HookInput, hookFilePath, hookInputSkip, hookOutput } from './hook.js'
 import { ensureModel, MODEL } from './model.js'
 import { Registry } from './registry.js'
 import { Store } from './store.js'
 
-/** The repository and path of the file a hook input names, or null when the hook has nothing to do. */
-export function hookTarget(input: HookInput): { repo: RepoInfo; path: string } | null {
-  const file = hookFilePath(input)
-  if (!file) return null
-  let abs: string
-  try {
-    abs = realpathSync(file)
-  } catch {
-    return null
-  }
-  const repo = repoOf(dirname(abs))
-  return repo ? { repo, path: relative(repo.root, abs) } : null
-}
+/** What the hook acts on: the repository and path of the file, or why it does nothing. */
+export type HookPlan =
+  | { repo: RepoInfo; path: string; skipped?: undefined }
+  | { skipped: string; repo?: RepoInfo; path?: string }
 
 /**
- * True when the hook acts on this input: the file is in a repository indexed with `semindex index` (any
- * worktree of it). Cheap enough for the client to check before it starts a server.
+ * The repository and path of the file a hook input names, or the reason the hook does nothing with it: the
+ * tool, a file outside git, a file that is not production code, a repository not indexed with `semindex index`
+ * (any worktree of it). Cheap enough for the client to check before it starts a server.
  */
+export function hookPlan(input: HookInput, cacheDir: string): HookPlan {
+  const skipped = hookInputSkip(input)
+  if (skipped) return { skipped }
+  let abs: string
+  try {
+    abs = realpathSync(hookFilePath(input) as string)
+  } catch {
+    return { skipped: 'file not found' }
+  }
+  const repo = repoOf(dirname(abs))
+  if (!repo) return { skipped: 'not in a git repository' }
+  const path = relative(repo.root, abs)
+  if (!new Registry(cacheDir).isIndexed(repo.commonDir)) return { skipped: 'repo not indexed', repo, path }
+  const cls = classifyPath(path)
+  if (!cls || cls.lang === 'md' || cls.lang === 'mdx') return { skipped: 'not a code file', repo, path }
+  if (cls.test) return { skipped: 'test file', repo, path }
+  return { repo, path }
+}
+
+/** True when the hook acts on this input. */
 export function hookApplies(input: HookInput, cacheDir: string): boolean {
-  const target = hookTarget(input)
-  return !!target && new Registry(cacheDir).isIndexed(target.repo.commonDir)
+  return hookPlan(input, cacheDir).skipped === undefined
 }
 
 export interface SearchHit {
@@ -262,9 +274,14 @@ export class Service {
    * are searched too, loaded the same way.
    */
   async hook(input: HookInput, configPath?: string): Promise<string> {
-    const target = hookTarget(input)
-    if (!target || !this.registry.isIndexed(target.repo.commonDir)) return ''
-    const { repo, path } = target
+    return hookOutput(await this.hookFindings(input, configPath))
+  }
+
+  /** The functions of the hook's message, before formatting; empty where the hook does not act. */
+  async hookFindings(input: HookInput, configPath?: string): Promise<HookFinding[]> {
+    const plan = hookPlan(input, this.cacheDir)
+    if (plan.skipped !== undefined) return []
+    const { repo, path } = plan
     return this.request(async () => {
       if (!this.engine.hasView(repo.root) || this.engine.viewHead(repo.root) !== repo.head) {
         const stats = await this.index(repo.root, { embed: false })
@@ -273,7 +290,7 @@ export class Service {
         if (stats.missingVectors > 0) this.background(repo.root)
       }
       const { peers } = await this.peers(repo, configPath)
-      return hookOutput(await this.engine.hookCheck(repo.root, path, peers))
+      return this.engine.hookCheck(repo.root, path, peers)
     })
   }
 

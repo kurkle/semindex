@@ -22,6 +22,9 @@ export const HOOK_MIN_TOKENS = 30
 export const HOOK_MAX_MATCHES = 3
 export const HOOK_MAX_FUNCTIONS = 5
 
+/** Hook event log: at this size events.jsonl is renamed to events.1.jsonl (replacing it) and a new one starts. */
+export const EVENTS_MAX_BYTES = 8 * 1024 * 1024
+
 /** Reciprocal rank fusion constant for BM25 + embedding. */
 export const RRF_K = 60
 
