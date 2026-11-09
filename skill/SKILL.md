@@ -20,14 +20,15 @@ groupParticipantsByClass (src/lib/registration.ts:120) resembles:
 - The score is the cosine similarity of two functions' embeddings (CodeRankEmbed). It says the two read alike,
   not that they do the same job.
 - `exact copy` means the same code up to names and literals (identical AST hash).
-- A match is listed from 0.80 in the same folder and from 0.75 in another folder. Copies in another folder are
-  the ones you cannot see from the file you edit, so they get the softer bar.
+- A match is listed from 0.75, in the same folder or another. The label says which: a copy in another folder is
+  the one you cannot see from the file you edit.
 - When the repository is in a group, matches can come from the other repositories of the group. They are
   labelled `(other repo)`, with the repository's name before the path (`other-repo/src/geometry.ts:55`), and
-  get the other-folder bar. Such a match is the other repository's main checkout, not a file you can import:
+  get the same bar. Such a match is the other repository's main checkout, not a file you can import:
   reuse means a shared package or a deliberate copy, so say which.
 - Rough guide, from nine replayed tasks: the copies agents merged scored 0.81 to 0.91; matches that did a
-  different job scored 0.60 to 0.68. Between 0.75 and 0.81 there is too little data to say.
+  different job scored 0.60 to 0.68. Known copies from koekalenteri's history also scored 0.776 and 0.796 in the
+  same folder, so a same-folder match below 0.80 is worth reading too.
 
 ## What to do with a lead
 
