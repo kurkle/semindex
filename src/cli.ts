@@ -6,10 +6,12 @@ import { call } from './client.js'
 import { defaultConfigPath } from './config.js'
 import type { DepHit, DepsStats, UpgradeReport } from './deps/deps.js'
 import type { HookFinding, IndexStats, Match } from './engine.js'
+import { appendEvent, eventsPath, type HookEvent, readEvents, runHook } from './events.js'
 import { findingLines, type HookInput, matchPlace } from './hook.js'
+import { buildReport, printReport } from './report.js'
 import { forget, groupAdd, groupList, groupRemove, type Member } from './repos.js'
 import { type Request, serve } from './server.js'
-import { hookApplies, type PairRow, type SearchHit, Service } from './service.js'
+import { type PairRow, type SearchHit, Service } from './service.js'
 import { defaultCacheDir } from './store.js'
 
 const HELP = `semindex: local semantic index of code and docs
@@ -30,6 +32,7 @@ const HELP = `semindex: local semantic index of code and docs
   semindex serve                     run the resident server (started on demand by the other commands)
   semindex stop                      stop the resident server
   semindex hook                      Claude Code PostToolUse hook: reads the hook JSON on stdin
+  semindex report [--since DATE]     what the hook runs logged in events.jsonl did, and what became of each finding
   semindex status                    cache location and size
 
 Options: --package NAME limits --deps to one dependency (repeatable); --json prints JSON.
@@ -59,7 +62,7 @@ async function handle(service: Service, req: Request): Promise<unknown> {
     case 'pairs':
       return service.pairs(p.dirs as string[], p.threshold as number | undefined)
     case 'hook':
-      return service.hook(p.input as HookInput, p.config as string)
+      return service.hookFindings(p.input as HookInput, p.config as string)
     case 'index-deps':
       return Promise.all(
         (p.dirs as string[]).map((d) =>
@@ -260,6 +263,7 @@ async function main(): Promise<void> {
       json: { type: 'boolean' },
       deps: { type: 'boolean' },
       'parse-only': { type: 'boolean' },
+      since: { type: 'string' },
       package: { type: 'string', multiple: true },
       help: { type: 'boolean', short: 'h' },
     },
@@ -289,16 +293,40 @@ async function main(): Promise<void> {
   const out = (v: unknown, print: () => void) => (values.json ? console.log(JSON.stringify(v, null, 1)) : print())
   switch (cmd) {
     case 'hook': {
-      // A hook must never get in the way: any failure ends silently with exit 0.
+      // A hook must never get in the way: any failure ends silently with exit 0, and is logged in events.jsonl.
+      let pending: { event: HookEvent; started: number } | null = null
+      process.once('SIGTERM', () => {
+        if (pending) {
+          const { event, started } = pending
+          event.outcome = 'error'
+          event.message = 'killed by SIGTERM'
+          event.duration_ms = Math.round(performance.now() - started)
+          appendEvent(cacheDir, event)
+        }
+        process.exit(0)
+      })
+      let raw = ''
       try {
-        const input = JSON.parse(readFileSync(0, 'utf8')) as HookInput
-        // Outside an indexed repository the hook does nothing, and starts no server.
-        if (!hookApplies(input, cacheDir)) return
-        const text = (await run('hook', { input, config })) as string
-        if (text) process.stdout.write(`${text}\n`)
-      } catch (e) {
-        console.error(`semindex hook: ${e instanceof Error ? e.message : String(e)}`)
-      }
+        raw = readFileSync(0, 'utf8')
+      } catch {}
+      const { stdout, event } = await runHook(
+        raw,
+        cacheDir,
+        (input) => run('hook', { input, config }),
+        (event, started) => {
+          pending = { event, started }
+        }
+      )
+      pending = null
+      if (event.outcome === 'error') console.error(`semindex hook: ${event.message}`)
+      if (stdout) process.stdout.write(`${stdout}\n`)
+      return
+    }
+    case 'report': {
+      const since = values.since ? Date.parse(values.since) : undefined
+      if (since !== undefined && Number.isNaN(since)) throw new Error(`--since: not a date: ${values.since}`)
+      const r = buildReport(readEvents(cacheDir), since)
+      out(r, () => printReport(r, eventsPath(cacheDir)))
       return
     }
     case 'index': {
