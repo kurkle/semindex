@@ -143,8 +143,10 @@ how to read the scores; the thresholds and the measurements behind them are in `
 
 `semindex hook` reads a PostToolUse hook input on stdin. After an Edit or Write it re-indexes that file and, for
 each function that is new or changed, lists existing functions scoring at least 0.75, in the same folder, another
-folder or another member of the repository's groups, and exact copies. The list goes back to the
-model as `additionalContext`; when nothing passes, the hook prints nothing. A repo the server has not loaded
+folder or another member of the repository's groups, and exact copies. A function under 30 AST tokens is listed
+only with its exact copies, and for such a short function an exact copy is the same text apart from the declared
+name and whitespace. The list goes back to the model as `additionalContext`; when nothing passes, the hook prints
+nothing. A repo the server has not loaded
 yet is read from the cache without waiting for missing embeddings, which are then filled in the background.
 
 The hook acts only in repositories indexed with `semindex index` (or added to a group), in any of their

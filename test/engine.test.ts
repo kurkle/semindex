@@ -22,9 +22,19 @@ const EMAIL = `export function registrationEmails(registration: { owner: { email
 }
 `
 
+const MINUTES = `export const minutes = (ms: number) => Math.max(0, Math.round(ms / 60000))
+`
+
+/** Not an exact copy of MINUTES: one more `+ 1`. */
+const NEAR_MINUTES = MINUTES.replace('export const minutes', 'const roundedMinutes').replace('60000))', '60000) + 1)')
+
+/** The same AST hash as MINUTES with another literal: at this length that is a different job, not a copy. */
+const SECONDS = MINUTES.replace('export const minutes', 'const seconds').replace('60000', '1000')
+
 function setup() {
   const repo = makeRepo({
     'src/lib/places.ts': PLACES,
+    'src/lib/time.ts': MINUTES,
     'src/lambda/email.ts': EMAIL,
     'src/lib/places.test.ts': `export function testHelper() { return 1 }\n`,
     'docs/guide.md': '# Places\n\nHow places are split among classes.\n',
@@ -38,13 +48,13 @@ describe('Engine.index', () => {
   it('parses and embeds each blob once, and nothing on a second run', async () => {
     const { repo, embedder, engine } = setup()
     const first = await engine.index(repo)
-    expect(first.files).toBe(4)
-    expect(first.parsed).toBe(4)
-    expect(first.embedded).toBe(4)
+    expect(first.files).toBe(5)
+    expect(first.parsed).toBe(5)
+    expect(first.embedded).toBe(5)
     const second = await engine.index(repo)
     expect(second.parsed).toBe(0)
     expect(second.embedded).toBe(0)
-    expect(embedder.texts).toBe(4)
+    expect(embedder.texts).toBe(5)
   })
 
   it('re-parses only the touched file and re-embeds only its changed function', async () => {
@@ -55,7 +65,7 @@ describe('Engine.index', () => {
     expect(stats.parsed).toBe(1)
     expect(stats.embedded).toBe(1)
     expect(stats.reusedVectors).toBe(1)
-    expect(embedder.texts).toBe(5)
+    expect(embedder.texts).toBe(6)
   })
 
   it('reuses the cache from a second worktree of the same repository', async () => {
@@ -67,10 +77,10 @@ describe('Engine.index', () => {
     const fresh = new Engine(engine.store, async () => embedder)
     const stats = await fresh.index(wt)
     expect(stats.root).toBe(realpathSync(wt))
-    expect(stats.files).toBe(4)
+    expect(stats.files).toBe(5)
     expect(stats.parsed).toBe(0)
     expect(stats.embedded).toBe(0)
-    expect(embedder.texts).toBe(4)
+    expect(embedder.texts).toBe(5)
   })
 
   it('never writes into the indexed working tree', async () => {
@@ -106,7 +116,64 @@ describe('Engine.diffCheck', () => {
   })
 })
 
+describe('Engine.diffCheck on short functions', () => {
+  it('lists a short exact copy, and not a short near-copy or one with another literal', async () => {
+    const { repo, engine } = setup()
+    git(repo, 'checkout', '-q', '-b', 'task')
+    writeFiles(repo, {
+      'src/pages/live.ts': MINUTES.replace('export const minutes', 'const toMinutes'),
+      'src/pages/near.ts': NEAR_MINUTES,
+      'src/pages/seconds.ts': SECONDS,
+    })
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-q', '-m', 'copies')
+    await engine.index(repo)
+    const r = engine.diffCheck(repo, 'main')
+    expect(r.checked).toBe(3)
+    expect(r.findings).toHaveLength(1)
+    expect(r.findings[0]).toMatchObject({ path: 'src/pages/live.ts', name: 'toMinutes' })
+    expect(r.findings[0]?.matches).toMatchObject([{ path: 'src/lib/time.ts', name: 'minutes', exact: true }])
+  })
+})
+
 describe('Engine.hookCheck', () => {
+  it('takes out only the declared name of a short function, not the same word in its body', async () => {
+    const { repo, engine } = setup()
+    const route = (name: string) => `export const paths = { ${name}: (id: string) => \`/admin/${name}/\${id}\` }\n`
+    writeFiles(repo, { 'src/lib/routes.ts': route('results') })
+    await engine.index(repo)
+    writeFiles(repo, { 'src/pages/routes.ts': route('stations') })
+    expect(await engine.hookCheck(repo, 'src/pages/routes.ts')).toEqual([])
+  })
+
+  it('lists a short exact copy and stays silent for a short near-copy', async () => {
+    const { repo, engine } = setup()
+    await engine.index(repo)
+    writeFiles(repo, { 'src/pages/live.ts': MINUTES.replace('export const minutes', 'const toMinutes') })
+    const findings = await engine.hookCheck(repo, 'src/pages/live.ts')
+    expect(findings.map((f) => f.name)).toEqual(['toMinutes'])
+    expect(findings[0]?.matches).toMatchObject([{ path: 'src/lib/time.ts', name: 'minutes', exact: true }])
+
+    writeFiles(repo, {
+      'src/pages/near.ts': NEAR_MINUTES,
+    })
+    expect(await engine.hookCheck(repo, 'src/pages/near.ts')).toEqual([])
+  })
+
+  it('still lists a longer near-copy by its score', async () => {
+    const { repo, engine } = setup()
+    await engine.index(repo)
+    const near = PLACES.replace('distributePlacesAmongClasses', 'splitPlacesPerDay').replace(
+      '  return classes.map',
+      '  const count = classes.length\n  return classes.map'
+    )
+    writeFiles(repo, { 'src/pages/day.ts': near })
+    const findings = await engine.hookCheck(repo, 'src/pages/day.ts')
+    expect(findings.map((f) => f.name)).toEqual(['splitPlacesPerDay'])
+    expect(findings[0]?.matches[0]).toMatchObject({ name: 'distributePlacesAmongClasses', exact: false })
+    expect(findings[0]?.matches[0]?.score).toBeGreaterThanOrEqual(0.75)
+  })
+
   it('lists the existing function a new copy resembles, and stays silent for an unrelated one', async () => {
     const { repo, engine } = setup()
     await engine.index(repo)

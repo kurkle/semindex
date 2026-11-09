@@ -108,6 +108,22 @@ function dot(a: Float32Array, b: Float32Array): number {
 }
 
 /**
+ * Whether two functions read the same once `export`, the name in their declaration (`function name`, `const
+ * name =`, `name()`) and the whitespace are taken out. The same word in the body stays.
+ */
+function sameTextButName(a: Chunk, b: Chunk): boolean {
+  const bare = (c: Chunk) => {
+    const name = c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const head = new RegExp(`^((?:async\\s+)?function\\*?\\s+|(?:const|let|var)\\s+)?${name}(?![\\w$])`)
+    return c.text
+      .replace(/^export\s+(default\s+)?/, '')
+      .replace(head, '$1')
+      .replace(/\s+/g, '')
+  }
+  return bare(a) === bare(b)
+}
+
+/**
  * The index of one or more working trees, held in memory over a content-addressed store. Blobs are shared
  * across worktrees of a repository (and across repositories with identical files).
  */
@@ -364,7 +380,9 @@ export class Engine {
   /**
    * Nearest production functions to one function, by cosine of the first parts, in its own view and in the
    * views of `peers`. Excludes the function itself (same path and name in its own view) and functions it calls
-   * or that call it. A peer's function is never in the same folder.
+   * or that call it. A peer's function is never in the same folder. A function shorter than `HOOK_MIN_TOKENS`
+   * is taken only as an exact copy, which for a short function means the same text apart from its own name and
+   * whitespace: at that length an identical AST hash is shared by functions that do different jobs.
    */
   nearest(root: string, target: Entry, k: number, peers: Peer[] = []): Match[] {
     const qv = target.vectors[0]
@@ -376,7 +394,11 @@ export class Engine {
       if (view.root !== root && !this.views.has(view.root)) continue
       const own = view.root === root
       for (const e of this.entries(view.root)) {
-        if (e.chunk.kind !== 'function' || e.file.test || e.chunk.n < HOOK_MIN_TOKENS) continue
+        if (e.chunk.kind !== 'function' || e.file.test) continue
+        const sameAst = e.chunk.astHash === target.chunk.astHash
+        const short = e.chunk.n < HOOK_MIN_TOKENS || target.chunk.n < HOOK_MIN_TOKENS
+        const exact = sameAst && (!short || sameTextButName(e.chunk, target.chunk))
+        if (e.chunk.n < HOOK_MIN_TOKENS && !exact) continue
         if (own && e.file.path === target.file.path && e.chunk.name === target.chunk.name) continue
         if (callsEither(self, this.pairItem('', e))) continue
         const v = e.vectors[0]
@@ -388,7 +410,7 @@ export class Engine {
           name: e.chunk.name,
           score: dot(v, qv),
           sameFolder: own && dirname(e.file.path) === folder,
-          exact: e.chunk.astHash === target.chunk.astHash,
+          exact,
         })
       }
     }
@@ -396,8 +418,16 @@ export class Engine {
     return out.slice(0, k)
   }
 
-  /** Existing functions at or above the hook threshold for one function, and exact copies. */
+  /**
+   * Existing functions at or above the hook threshold for one function, and exact copies. A function shorter
+   * than `HOOK_MIN_TOKENS` gets its exact copies only, from all functions rather than the nearest 20.
+   */
   private leads(root: string, entry: Entry, peers: Peer[]): Match[] {
+    if (entry.chunk.n < HOOK_MIN_TOKENS) {
+      return this.nearest(root, entry, Number.POSITIVE_INFINITY, peers)
+        .filter((m) => m.exact)
+        .slice(0, HOOK_MAX_MATCHES)
+    }
     return this.nearest(root, entry, 20, peers)
       .filter((m) => m.exact || m.score >= HOOK_THRESHOLD)
       .slice(0, HOOK_MAX_MATCHES)
@@ -414,7 +444,7 @@ export class Engine {
     const res = await this.reindexFile(root, path)
     if (!res) return []
     const old = new Set(res.before.map((c) => c.textHash))
-    const changed = res.after.filter((c) => c.kind === 'function' && !old.has(c.textHash) && c.n >= HOOK_MIN_TOKENS)
+    const changed = res.after.filter((c) => c.kind === 'function' && !old.has(c.textHash))
     const findings: HookFinding[] = []
     for (const c of changed) {
       const entry = this.entries(root).find((e) => e.file.path === path && e.chunk.textHash === c.textHash)
@@ -461,7 +491,7 @@ export class Engine {
     const findings: HookFinding[] = []
     for (const r of changed) {
       for (const c of this.blob(r)?.extracted.chunks ?? []) {
-        if (c.kind !== 'function' || c.n < HOOK_MIN_TOKENS || before.has(key(r.path, c.textHash))) continue
+        if (c.kind !== 'function' || before.has(key(r.path, c.textHash))) continue
         const entry = entries.get(key(r.path, c.textHash))
         if (!entry) continue
         checked++

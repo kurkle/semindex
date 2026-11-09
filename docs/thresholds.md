@@ -104,8 +104,13 @@ Chosen:
 - The same-folder bar was 0.80 until a recall run over 22 copies from koekalenteri's history (below) found
   same-folder copies with the original ranked first at 0.776 and 0.796. At 0.75 the same folder fires for about
   one function in six, against one in twelve at 0.80.
-- Minimum 30 AST tokens for the hook (the pairing rule keeps 60): the audit-key copy that was caught has 46.
-- An identical AST hash is always listed, as an exact copy.
+- Minimum 30 AST tokens for a match by score (the pairing rule keeps 60): the audit-key copy that was caught
+  has 46. A shorter function is still compared, and listed with its exact copies only.
+- An identical AST hash is always listed, as an exact copy. When either function is under 30 tokens the text
+  has to match as well, apart from the declared name and whitespace: at that length an identical AST hash
+  joins functions that do different jobs. In six pull requests with no known copy, the AST hash alone gave six
+  short functions such matches (`isMicrochip` with `isPublicRegistrationOperationField`, three page components
+  that each wrap a different component in the same guard); the text rule gave none.
 
 ## Hook recall: copies from koekalenteri's history
 
@@ -121,4 +126,5 @@ each checked with `semindex diff` against the commit before the copy, and six pu
 The two copies 0.75 adds scored 0.776 and 0.796 against their originals, ranked first, in the same folder. The
 control lead is `writeEventFields` against `writeMigratedEvent` (0.779, same file): two thin wrappers of the
 same DynamoDB update that do different jobs, not a copy. A third same-folder copy, at 0.723 and ranked second,
-stays below the line. The nine short copies are under the 30-token minimum and are not compared.
+stays below the line. The nine short copies are under the 30-token minimum and were not compared before short
+functions got exact-copy matching.
