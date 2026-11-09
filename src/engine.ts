@@ -1,14 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { basename, dirname, relative } from 'node:path'
 import { Bm25, reciprocalRankFusion, tokenize } from './bm25.js'
-import {
-  HOOK_MAX_FUNCTIONS,
-  HOOK_MAX_MATCHES,
-  HOOK_MIN_TOKENS,
-  HOOK_OTHER_FOLDER_THRESHOLD,
-  HOOK_SAME_FOLDER_THRESHOLD,
-  RRF_K,
-} from './constants.js'
+import { HOOK_MAX_FUNCTIONS, HOOK_MAX_MATCHES, HOOK_MIN_TOKENS, HOOK_THRESHOLD, RRF_K } from './constants.js'
 import type { Embedder } from './embed.js'
 import { type Chunk, classifyPath, type Extracted, extract, type Lang } from './extract/index.js'
 import { listTree, type RepoInfo, readBlobs, repoOf, workingChanges } from './git.js'
@@ -426,7 +419,7 @@ export class Engine {
   }
 
   /**
-   * Existing functions at or above the hook thresholds for one function, and exact copies. A function shorter
+   * Existing functions at or above the hook threshold for one function, and exact copies. A function shorter
    * than `HOOK_MIN_TOKENS` gets its exact copies only, from all functions rather than the nearest 20.
    */
   private leads(root: string, entry: Entry, peers: Peer[]): Match[] {
@@ -436,13 +429,13 @@ export class Engine {
         .slice(0, HOOK_MAX_MATCHES)
     }
     return this.nearest(root, entry, 20, peers)
-      .filter((m) => m.exact || m.score >= (m.sameFolder ? HOOK_SAME_FOLDER_THRESHOLD : HOOK_OTHER_FOLDER_THRESHOLD))
+      .filter((m) => m.exact || m.score >= HOOK_THRESHOLD)
       .slice(0, HOOK_MAX_MATCHES)
   }
 
   /**
    * The hook check for one edited file: functions that are new or changed since the view last saw the file,
-   * each with the existing functions above the same-folder or other-folder threshold, in its own view and in
+   * each with the existing functions at or above the hook threshold, in its own view and in
    * the peers' views.
    */
   async hookCheck(root: string, path: string, peers: Peer[] = []): Promise<HookFinding[]> {
@@ -465,7 +458,7 @@ export class Engine {
 
   /**
    * The check of a whole branch: every production function added or changed in the view since the commit
-   * `base`, dirty files included, each with the existing functions above the hook thresholds (in the peers'
+   * `base`, dirty files included, each with the existing functions at or above the hook threshold (in the peers'
    * views too). A function is
    * compared with its own file at `base`, so one that moved to another file counts as new there.
    */

@@ -190,7 +190,7 @@ describe('group config', () => {
   })
 })
 
-/** Vectors chosen by a marker word in the text: `alpha` along one axis, `beta` at cosine 0.77 to it. */
+/** Vectors chosen by a marker word in the text: `alpha` along one axis, `beta` at cosine 0.77 and `gamma` at 0.74 to it. */
 class MarkerEmbedder implements Embedder {
   readonly dims = 768
   async embed(texts: string[]): Promise<Float32Array[][]> {
@@ -200,6 +200,9 @@ class MarkerEmbedder implements Embedder {
       else if (t.includes('beta')) {
         v[0] = 0.77
         v[1] = Math.sqrt(1 - 0.77 * 0.77)
+      } else if (t.includes('gamma')) {
+        v[0] = 0.74
+        v[1] = Math.sqrt(1 - 0.74 * 0.74)
       } else v[2] = 1
       return [v]
     })
@@ -214,12 +217,12 @@ const marked = (name: string, marker: string, extra = '') => `export function ${
 `
 
 describe('cross-repo matches', () => {
-  it('names the other repository and holds it to the other-folder threshold', async () => {
+  it('names the other repository and holds every match to the same threshold', async () => {
     const engine = new Engine(new Store(tempDir('semindex-cache-'), 'fake'), async () => new MarkerEmbedder())
     const own = realpathSync(
       makeRepo({
         'src/lib/near.ts': marked('nearSameFolder', 'beta', '.map((x) => x * 2)'),
-        'src/other/near.ts': marked('nearOtherFolder', 'beta', '.map((x) => x * 3)'),
+        'src/other/far.ts': marked('farOtherFolder', 'gamma', '.map((x) => x * 3)'),
       })
     )
     const peer = realpathSync(
@@ -235,18 +238,19 @@ describe('cross-repo matches', () => {
     const findings = await engine.hookCheck(own, 'src/lib/new.ts', peers)
     expect(findings).toHaveLength(1)
     const matches = findings[0]?.matches ?? []
-    // 0.77 passes the other-folder threshold (0.75) but not the same-folder one (0.80): the peer's function in
-    // a folder of the same name counts as another folder; the own repo's same-folder one does not pass.
+    // 0.77 passes the threshold (0.75) in the same folder and in another repo, 0.74 in another folder does not;
+    // the peer's function in a folder of the same name counts as another folder.
     const rows = matches.map((m) => [m.name, m.repo, m.sameFolder, m.exact])
     expect(rows.sort()).toEqual([
       ['copyInPeer', basename(peer), false, true],
       ['nearInPeer', basename(peer), false, false],
-      ['nearOtherFolder', undefined, false, false],
+      ['nearSameFolder', undefined, true, false],
     ])
     expect(matches.find((m) => m.name === 'nearInPeer')?.score).toBeCloseTo(0.77, 2)
     const text = formatFindings(findings)
     expect(text).toContain(`  exact copy  ${basename(peer)}/src/lib/copy.ts:1  copyInPeer  (other repo)`)
-    expect(text).toContain('  0.77  src/other/near.ts:1  nearOtherFolder  (other folder)')
+    expect(text).toContain('  0.77  src/lib/near.ts:1  nearSameFolder  (same folder)')
+    expect(text).not.toContain('farOtherFolder')
   })
 
   it('does not take a function in another repo with the same path and name for the function itself', async () => {

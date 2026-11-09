@@ -127,7 +127,8 @@ written in one member is compared with the production functions of the other mem
 - Another member is compared as `semindex index <dir>` on its main working tree sees it: the current HEAD of
   that checkout plus its dirty files. Other worktrees and branches of a member are not searched.
 - A match in another member names it (the directory name of its main working tree) before the path, is marked
-  `(other repo)`, and is held to the other-folder threshold of 0.75. Exact copies are reported as exact.
+  `(other repo)`, and is held to the same threshold of 0.75 as the repository's own functions. Exact copies are
+  reported as exact.
 - A member is loaded from the cache without embedding and without waiting; a member with missing vectors is
   embedded in the background (the server stays up for it), and until then its unembedded functions are not
   compared. `diff` and `similar` say which members are still being embedded. A member's view is rebuilt in
@@ -141,10 +142,11 @@ how to read the scores; the thresholds and the measurements behind them are in `
 ## Claude Code hook
 
 `semindex hook` reads a PostToolUse hook input on stdin. After an Edit or Write it re-indexes that file and, for
-each function that is new or changed, lists existing functions scoring at least 0.80 in the same folder or 0.75
-in another folder or another member of the repository's groups, and exact copies. A function under 30 AST
-tokens is listed only with its exact copies, and for such a short function an exact copy is the same text apart
-from the declared name and whitespace. The list goes back to the model as `additionalContext`; when nothing passes, the hook prints nothing. A repo the server has not loaded
+each function that is new or changed, lists existing functions scoring at least 0.75, in the same folder, another
+folder or another member of the repository's groups, and exact copies. A function under 30 AST tokens is listed
+only with its exact copies, and for such a short function an exact copy is the same text apart from the declared
+name and whitespace. The list goes back to the model as `additionalContext`; when nothing passes, the hook prints
+nothing. A repo the server has not loaded
 yet is read from the cache without waiting for missing embeddings, which are then filled in the background.
 
 The hook acts only in repositories indexed with `semindex index` (or added to a group), in any of their
